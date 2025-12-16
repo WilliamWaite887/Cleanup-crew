@@ -178,7 +178,6 @@ pub fn entered_room(
                 commands.entity(*door).insert(Collidable);
                 commands.entity(*door).insert(Collider { half_extents: Vec2::splat(TILE_SIZE * 0.5) },);
                 commands.entity(*door).insert(Sprite::from_image(tiles.closed_door.clone()));
-                
             }
             for room in rooms.0.iter(){
                 if room.cleared{
@@ -507,7 +506,7 @@ pub fn apply_breach_forces_to_entities(
     mut enemies: Query<(&Transform, &mut crate::enemy::Velocity, &crate::fluiddynamics::PulledByFluid), (With<crate::enemy::Enemy>, Without<crate::player::Player>, Without<crate::table::Table>)>,
 ) {
     // Determine which room the player is in
-    let player_room = if let Ok((player_transform, _, _)) = player.get_single() {
+    let player_room = if let Ok((player_transform, _, _)) = player.single() {
         let player_pos = player_transform.translation.truncate();
         rooms.0.iter().find(|room| room.bounds_check(player_pos))
     } else {

@@ -1,5 +1,7 @@
 use bevy::prelude::*;
+use bevy::render::render_resource::TextureUsages;
 use bevy::scene::ron::de;
+use bevy::text::cosmic_text::ttf_parser::gpos::Anchor;
 
 use std::fs::File;
 use std::io::BufReader;
@@ -114,6 +116,11 @@ impl Plugin for MapPlugin {
 
 fn playing_state(mut next_state: ResMut<NextState<GameState>>) {
     next_state.set(GameState::Playing);
+}
+
+// Makes lower walls spawn above higher walls
+fn z_from_y(y: f32) -> f32 {
+    Z_FLOOR + 10.0 - y * 0.001
 }
 
 fn load_map(mut commands: Commands, asset_server: Res<AssetServer>,
@@ -231,7 +238,7 @@ pub fn setup_tilemap(
             let is_generated_enemy = false;//enemies.0.contains(&(col_i,row_i));
 
             // always draw floor under solid/interactive tiles & enemy spawns
-            if matches!(ch, '#' | 'T' | 'W' | 'G' | 'E') || is_generated_table || is_generated_enemy {
+            if matches!(ch, '#' | 'T' | 'W' | 'G' | 'E' | 'D') || is_generated_table || is_generated_enemy {
                 floor_positions.push(Vec3::new(x, y, Z_FLOOR));
             }
 
@@ -281,12 +288,17 @@ pub fn setup_tilemap(
     commands.spawn_batch(floor_batch);
 
     // Batch spawn walls
+    
     let wall_batch: Vec<_> = wall_positions.iter().map(|&pos| {
         let mut sprite = Sprite::from_image(tiles.wall.clone());
-        sprite.custom_size = Some(Vec2::splat(TILE_SIZE));
+        sprite.custom_size = Some(Vec2::new(TILE_SIZE,TILE_SIZE*1.5625));
         (
             sprite,
-            Transform::from_translation(pos),
+            Transform{
+                translation: Vec3::new(pos.x, pos.y, z_from_y(pos.y)),
+                scale: Vec3::new(1.0, 1.31, 1.0),
+                ..Default::default()
+            },
             Collidable,
             Collider { half_extents: Vec2::splat(TILE_SIZE * 0.5) },
             Name::new("Wall"),
@@ -323,10 +335,14 @@ pub fn setup_tilemap(
     // Batch spawn glass windows
     let glass_batch: Vec<_> = glass_positions.iter().map(|&pos| {
         let mut sprite = Sprite::from_image(tiles.glass.clone());
-        sprite.custom_size = Some(Vec2::splat(TILE_SIZE));
+        sprite.custom_size = Some(Vec2::new(TILE_SIZE,TILE_SIZE*1.5625));
         (
             sprite,
-            Transform::from_translation(pos),
+            Transform{
+                translation: Vec3::new(pos.x, pos.y, z_from_y(pos.y)),
+                scale: Vec3::new(1.0, 1.31, 1.0),
+                ..Default::default()
+            },
             Name::new("Glass"),
             Collidable,
             Collider { half_extents: Vec2::splat(TILE_SIZE * 0.5) },
@@ -340,13 +356,16 @@ pub fn setup_tilemap(
 
     // Batch spawn doors
     let door_batch: Vec<_> = door_positions.iter().map(|&pos| {
-        let mut sprite = Sprite::from_image(tiles.open_door.clone());
-        sprite.custom_size = Some(Vec2::splat(TILE_SIZE));
+        let sprite = Sprite::from_image(tiles.open_door.clone());
         (
             sprite,
-            Transform::from_translation(Vec3::new(pos.x, pos.y, Z_FLOOR + 1.0)),
+            Transform{
+                translation: Vec3::new(pos.x, pos.y, z_from_y(pos.y)),
+                scale: Vec3::new(1.0, 1.0, 1.0),
+                ..Default::default()
+            },
             Name::new("Door"),
-            Door { is_open: false, pos },
+            Door { is_open: true, pos },
             GameEntity,
         )
     }).collect();
