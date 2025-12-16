@@ -131,7 +131,7 @@ pub fn shoot_bullet_on_click(
             ),
             Transform {
                 translation: Vec3::new(spawn_pos.x, spawn_pos.y, 5.0),
-                scale: Vec3::splat(0.25),
+                scale: Vec3::splat(0.15),
                 ..Default::default()
             },
             Velocity(dir_vec * BULLET_SPEED),
