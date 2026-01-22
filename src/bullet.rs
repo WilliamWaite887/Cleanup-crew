@@ -141,7 +141,10 @@ pub fn shoot_bullet_on_click(
             GameEntity,
         ));
 
-        commands.spawn(AudioPlayer::new(laser_sound.0.clone()));
+        commands.spawn((
+            AudioPlayer::new(laser_sound.0.clone()),
+            PlaybackSettings::DESPAWN,
+        ));
 
         shoot_timer.0.reset();
     }
@@ -183,7 +186,10 @@ pub fn spawn_bullets_from_ranged(
             GameEntity,
         ));
 
-        commands.spawn(AudioPlayer::new(laser_sound.0.clone()));
+        commands.spawn((
+            AudioPlayer::new(laser_sound.0.clone()),
+            PlaybackSettings::DESPAWN,
+        ));
     }
 }
 
