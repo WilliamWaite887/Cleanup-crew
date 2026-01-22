@@ -39,12 +39,16 @@ pub struct AnimationTimer(Timer);
 #[derive(Component, Deref, DerefMut)]
 pub struct AnimationFrameCount(usize);
 
+#[derive(Component)]
+pub struct MarkedForDespawn;
+
 impl Plugin for BulletPlugin {
     fn build(&self, app:&mut App) {
         app.add_systems(Startup, load_bullet)
             .add_systems(Update, shoot_bullet_on_click)
             .add_systems(Update, move_bullets.run_if(in_state(GameState::Playing)))
             .add_systems(Update, bullet_collision.run_if(in_state(GameState::Playing)))
+            .add_systems(Last,cleanup_marked_bullets.run_if(in_state(GameState::Playing)))
             .add_systems(Update, animate_bullet.after(move_bullets).run_if(in_state(GameState::Playing)))
             // .add_systems(Update, bullet_hits_enemy.run_if(in_state(GameState::Playing)))
             // .add_systems(Update, bullet_hits_player.run_if(in_state(GameState::Playing)))   // <── new
@@ -202,7 +206,7 @@ pub struct Velocity(pub Vec2);
 
 pub fn move_bullets(
     mut commands: Commands,
-    mut bullet_q: Query<(Entity, &mut Transform, &Velocity), With<Bullet>>,
+    mut bullet_q: Query<(Entity, &mut Transform, &Velocity), (With<Bullet>, Without<MarkedForDespawn>)>,
     time: Res<Time>,
 ) {
     for (entity, mut transform, vel) in bullet_q.iter_mut() {
@@ -211,7 +215,7 @@ pub fn move_bullets(
         // Despawn off-screen bullets
         let p = transform.translation;
         if p.x.abs() > 4000.0 || p.y.abs() > 4000.0 {
-            commands.entity(entity).despawn();
+            commands.entity(entity).insert(MarkedForDespawn);
         }
     }
 }
@@ -242,7 +246,7 @@ fn animate_bullet(
 
 pub fn bullet_collision(
     mut commands: Commands,
-    bullet_query: Query<(Entity, &Transform, &BulletOwner), With<Bullet>>,
+    bullet_query: Query<(Entity, &Transform, &BulletOwner), (With<Bullet>, Without<MarkedForDespawn>)>,
         mut enemy_query: Query<
         (&Transform, &mut crate::enemy::Health),
         (
@@ -272,7 +276,7 @@ pub fn bullet_collision(
         matches!(*lvlstate, LevelState::InRoom(_, _)) && rooms.0.len() == 1;
 
 
-        for (bullet_entity, bullet_tf, owner) in &bullet_query {
+        'bullet_loop: for (bullet_entity, bullet_tf, owner) in &bullet_query {  // Add label here
         let bullet_pos = bullet_tf.translation;
 
         // bullet hits enemy
@@ -285,8 +289,8 @@ pub fn bullet_collision(
                     enemy_pos.x, enemy_pos.y, enemy_half,
                 ) {
                     health.0 -= 25.0;
-                    commands.entity(bullet_entity).despawn();
-                    break;
+                    commands.entity(bullet_entity).insert(MarkedForDespawn);
+                    continue 'bullet_loop;  // Changed from break
                 }
             }
         }
@@ -300,8 +304,8 @@ pub fn bullet_collision(
                 player_pos.x, player_pos.y, player_half,
             ) {
                 hp.0 -= 10.0;
-                commands.entity(bullet_entity).despawn();
-                continue;
+                commands.entity(bullet_entity).insert(MarkedForDespawn);
+                continue 'bullet_loop;  // Already correct with continue
             }
         }
 
@@ -318,8 +322,8 @@ pub fn bullet_collision(
                     table_pos.x, table_pos.y, table_half,
                 ) {
                     table_health.0 -= 25.0;
-                    commands.entity(bullet_entity).despawn();
-                    break;
+                    commands.entity(bullet_entity).insert(MarkedForDespawn);
+                    continue 'bullet_loop;  // Changed from break
                 }
             }
         }
@@ -337,8 +341,8 @@ pub fn bullet_collision(
                     window_pos.x, window_pos.y, window_half,
                 ) {
                     window_health.0 -= 25.0;
-                    commands.entity(bullet_entity).despawn();
-                    break;
+                    commands.entity(bullet_entity).insert(MarkedForDespawn);
+                    continue 'bullet_loop;  // Changed from break
                 }
             }
         }
@@ -352,7 +356,7 @@ pub fn bullet_collision(
                     bullet_pos.x, bullet_pos.y, bullet_half,
                     reward_pos.x, reward_pos.y, reward_half,
                 ) {
-                    commands.entity(bullet_entity).despawn();
+                    commands.entity(bullet_entity).insert(MarkedForDespawn);
 
                     match reward_type.0 {
                         1 => {
@@ -373,9 +377,28 @@ pub fn bullet_collision(
                     }
 
                     commands.entity(reward_entity).despawn();
-                    break;
+                    continue 'bullet_loop;  // Changed from break
                 }
             }
+        }
+    }
+}
+
+fn cleanup_marked_bullets(
+    world: &mut World,
+) {
+    let mut to_despawn = Vec::new();
+    
+    // Collect entities to despawn
+    let mut query = world.query_filtered::<Entity, (With<Bullet>, With<MarkedForDespawn>)>();
+    for entity in query.iter(world) {
+        to_despawn.push(entity);
+    }
+    
+    // Despawn them
+    for entity in to_despawn {
+        if let Ok(entity_mut) = world.get_entity_mut(entity) {
+            entity_mut.despawn();
         }
     }
 }

@@ -577,6 +577,8 @@ fn clean_end_screen(mut commands: Commands, root_q: Query<Entity, With<GameOverS
 
 fn clean_game(mut commands: Commands, root_q: Query<Entity, With<GameEntity>>) {
     for e in &root_q {
-        commands.entity(e).despawn();
+        if let Ok(mut entity_commands) = commands.get_entity(e) {
+            entity_commands.despawn();
+        }
     }
 }
