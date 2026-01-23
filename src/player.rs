@@ -115,6 +115,7 @@ impl Plugin for PlayerPlugin {
             .add_systems(Update, enemy_hits_player.run_if(in_state(GameState::Playing)))
             .add_systems(Update, bullet_hits_window.run_if(in_state(GameState::Playing)))
             .add_systems(Update, table_hits_player.run_if(in_state(GameState::Playing)))
+            .add_systems(Update, wall_collision_correction.after(move_player).run_if(in_state(GameState::Playing)))
 
             ;
     }
@@ -806,4 +807,50 @@ fn apply_breach_force_to_player(
         
         
     }
+}
+
+// Prevents player from being inside walls (e.g., when pushed by tables)
+fn wall_collision_correction(
+    mut player_q: Query<&mut Transform, With<Player>>,
+    wall_q: Query<(&Transform, &Collider), (With<Collidable>, Without<Player>)>,
+) {
+    let Ok(mut player_tf) = player_q.single_mut() else { return };
+    
+    let player_half = Vec2::splat(TILE_SIZE * 0.5);
+    let mut player_pos = player_tf.translation.truncate();
+    
+    // Check all walls and push player out if they're inside
+    for (wall_tf, wall_col) in &wall_q {
+        let wall_pos = wall_tf.translation.truncate();
+        
+        if aabb_overlap(
+            player_pos.x, player_pos.y, player_half,
+            wall_pos.x, wall_pos.y, wall_col.half_extents
+        ) {
+            // Calculate overlap amounts
+            let overlap_x = (player_half.x + wall_col.half_extents.x) - (player_pos.x - wall_pos.x).abs();
+            let overlap_y = (player_half.y + wall_col.half_extents.y) - (player_pos.y - wall_pos.y).abs();
+            
+            // Push out on the axis with smaller overlap (shortest path out)
+            if overlap_x < overlap_y {
+                // Push horizontally
+                if player_pos.x > wall_pos.x {
+                    player_pos.x += overlap_x;
+                } else {
+                    player_pos.x -= overlap_x;
+                }
+            } else {
+                // Push vertically
+                if player_pos.y > wall_pos.y {
+                    player_pos.y += overlap_y;
+                } else {
+                    player_pos.y -= overlap_y;
+                }
+            }
+        }
+    }
+    
+    // Apply corrected position
+    player_tf.translation.x = player_pos.x;
+    player_tf.translation.y = player_pos.y;
 }
