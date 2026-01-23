@@ -25,6 +25,7 @@ pub mod broom;
 pub mod reward;
 pub mod heart;
 pub mod reaper;
+pub mod weapon;
 
 
 
@@ -128,6 +129,8 @@ fn main() {
             table::TablePlugin,
             fluiddynamics::FluidSimPlugin,
             window::WindowPlugin,
+        ))
+        .add_plugins((
             menu::MenuPlugin,
             bullet::BulletPlugin,
             room::RoomPlugin,
@@ -135,6 +138,7 @@ fn main() {
             reward::RewardPlugin,
             heart::HeartPlugin,
             reaper::ReaperPlugin,
+            weapon::WeaponPlugin,
         ))
         .add_systems(Startup, setup_camera)
         .add_systems(OnEnter(GameState::Menu), log_state_change)

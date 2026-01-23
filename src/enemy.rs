@@ -112,7 +112,7 @@ impl Plugin for EnemyPlugin {
         app.add_systems(Startup, load_enemy)
             .add_systems(Startup, load_ranged_enemy)
             .add_event::<RangedEnemyShootEvent>()
-            .add_systems(OnEnter(GameState::Playing), spawn_enemies_from_points)
+            // .add_systems(OnEnter(GameState::Playing), spawn_enemies_from_points)
             .add_systems(Update, animate_enemy.run_if(in_state(GameState::Playing)))
             .add_systems(
                 Update,

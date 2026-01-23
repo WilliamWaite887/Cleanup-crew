@@ -9,13 +9,14 @@ use crate::enemy::{Enemy, ENEMY_SIZE};
 use crate::enemy::HitAnimation;
 use crate::map::{LevelRes, MapGridMeta};
 use crate::fluiddynamics::PulledByFluid;
-use crate::bullet::{Bullet, BulletOwner};
+use crate::bullet::{Bullet, BulletOwner, Velocity};
+use crate::weapon::{Weapon, WeaponType, spawn_bullet, BulletRes, WeaponSounds, BulletDamage,};
 
 const BULLET_SPD: f32 = 700.;
 const WALL_SLIDE_FRICTION_MULTIPLIER: f32 = 0.92; // lower is more friction
 
-#[derive(Resource)]
-pub struct PlayerLaserSound(Handle<AudioSource>);
+// #[derive(Resource)]
+// pub struct PlayerLaserSound(Handle<AudioSource>);
 
 #[derive(Component)]
 pub struct Player;           
@@ -23,8 +24,8 @@ pub struct Player;
 #[derive(Component)]
 pub struct NumOfCleared(pub usize);  
 
-#[derive(Component, Deref, DerefMut)]
-pub struct Velocity(Vec2);
+// #[derive(Component, Deref, DerefMut)]
+// pub struct Velocity(Vec2);
 
 #[derive(Resource)]
 pub struct PlayerRes{
@@ -44,20 +45,20 @@ pub struct MaxHealth(pub f32);
 pub struct MoveSpeed(pub f32);
 
 
-#[derive(Resource)]
-pub struct BulletRes(Handle<Image>, Handle<TextureAtlasLayout>);
+// #[derive(Resource)]
+// pub struct BulletRes(Handle<Image>, Handle<TextureAtlasLayout>);
 
-#[derive(Resource)]
-pub struct ShootTimer(pub Timer);
+// #[derive(Resource)]
+// pub struct ShootTimer(pub Timer);
 
 #[derive(Component, Deref, DerefMut)]
 pub struct DamageTimer(pub Timer);
 
-#[derive(Component, Deref, DerefMut)]
-pub struct AnimationTimer(Timer);
+// #[derive(Component, Deref, DerefMut)]
+// pub struct AnimationTimer(Timer);
 
-#[derive(Component, Deref, DerefMut)]
-pub struct AnimationFrameCount(usize);
+// #[derive(Component, Deref, DerefMut)]
+// pub struct AnimationFrameCount(usize);
 
 #[derive(Component)]
 pub struct Facing(pub FacingDirection);
@@ -75,14 +76,14 @@ pub enum FacingDirection {
 }
 
 //Creates an instance of a Velocity
-impl Velocity {
-    fn new() -> Self {
-        Self(Vec2::ZERO)
-    }
-    fn new_vec(x: f32, y: f32) -> Self {
-        Self(Vec2{x, y})
-    }
-}
+// impl Velocity {
+//     fn new() -> Self {
+//         Self(Vec2::ZERO)
+//     }
+//     fn new_vec(x: f32, y: f32) -> Self {
+//         Self(Vec2{x, y})
+//     }
+// }
 
 //creates a variable of health
 impl Health {
@@ -102,14 +103,14 @@ pub struct PlayerPlugin;
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, load_player)
-            .add_systems(Startup, load_bullet)
+            // .add_systems(Startup, load_bullet)
             .add_systems(OnEnter(GameState::Playing), spawn_player.after(load_player))
             .add_systems(Update, move_player.run_if(in_state(GameState::Playing)))
             .add_systems(Update, update_player_sprite.run_if(in_state(GameState::Playing)))
             .add_systems(Update, apply_breach_force_to_player.after(move_player).run_if(in_state(GameState::Playing)))
-            .add_systems(Update, move_bullet.run_if(in_state(GameState::Playing)))
-            .add_systems(Update, bullet_collision.run_if(in_state(GameState::Playing)))
-            .add_systems(Update, animate_bullet.after(move_bullet).run_if(in_state(GameState::Playing)),)
+            // .add_systems(Update, move_bullet.run_if(in_state(GameState::Playing)))
+            // .add_systems(Update, bullet_collision.run_if(in_state(GameState::Playing)))
+            // .add_systems(Update, animate_bullet.after(move_bullet).run_if(in_state(GameState::Playing)),)
             .add_systems(Update, bullet_hits_enemy.run_if(in_state(GameState::Playing)))
             .add_systems(Update, bullet_hits_table.run_if(in_state(GameState::Playing)))
             .add_systems(Update, enemy_hits_player.run_if(in_state(GameState::Playing)))
@@ -148,11 +149,11 @@ fn load_player(mut commands: Commands, asset_server: Res<AssetServer>, mut textu
     };
     commands.insert_resource(player);
 
-    let laser_sound: Handle<AudioSource> = asset_server.load("audio/laser_zap.ogg");
-    commands.insert_resource(PlayerLaserSound(laser_sound));
+    // let laser_sound: Handle<AudioSource> = asset_server.load("audio/laser_zap.ogg");
+    // commands.insert_resource(PlayerLaserSound(laser_sound));
 
-    //Change time for how fast the player can shoot
-    commands.insert_resource(ShootTimer(Timer::from_seconds(0.5, TimerMode::Once)));
+    // //Change time for how fast the player can shoot
+    // commands.insert_resource(ShootTimer(Timer::from_seconds(0.5, TimerMode::Once)));
     
 }
 
@@ -185,8 +186,6 @@ fn spawn_player(
 
     let (gx, gy) = spawn_grid.unwrap_or((0, 0));
 
-
-    // Grid â†’ world (note the same vertical flip you use in setup_tilemap)
     let x_player_spawn_offset = TILE_SIZE * 2.0;
     let y_player_spawn_offset = -TILE_SIZE * 2.0;
 
@@ -204,7 +203,7 @@ fn spawn_player(
             ..Default::default()
         },
         Player,
-        Velocity::new(),
+        Velocity(Vec2::ZERO),
         Health::new(100.0),
         MaxHealth(100.0),
         DamageTimer::new(1.0),
@@ -214,7 +213,8 @@ fn spawn_player(
         Facing(FacingDirection::Down),
         NumOfCleared(0),
         PulledByFluid{mass: 50.0},
-        GameEntity,
+        Weapon::new(WeaponType::BasicLaser),  // Add weapon
+        GameEntity,  // Only ONE GameEntity!
     ));
 }
 
@@ -226,21 +226,21 @@ fn spawn_player(
 fn move_player(
     time: Res<Time>,
     input: Res<ButtonInput<KeyCode>>,
-    player: Single<(&mut Transform, &mut Velocity, &mut Facing, &MoveSpeed), With<Player>>,
+    mut player: Query<(&mut Transform, &mut Velocity, &mut Facing, &MoveSpeed, &mut Weapon), With<Player>>,
     mut next_state: ResMut<NextState<GameState>>,
     colliders: Query<(&Transform, &Collider), (With<Collidable>, Without<Player>, Without<Bullet>, Without<Broom>)>,
     mut commands: Commands,
-    bullet_animate: Res<BulletRes>,
-    mut shoot_timer: ResMut<ShootTimer>,
+    bullet_res: Res<BulletRes>,
     grid_query: Query<&crate::fluiddynamics::FluidGrid>,
     buttons: Res<ButtonInput<MouseButton>>,
-    laser_sound: Res<PlayerLaserSound>,
+    weapon_sounds: Res<WeaponSounds>,
 ) {
-
     let Ok(grid) = grid_query.single() else {
         return;
     };
-    let (mut transform, mut velocity, mut facing, spd) = player.into_inner();
+    let Ok((mut transform, mut velocity, mut facing, spd, mut weapon)) = player.single_mut() else {
+        return;
+    };
 
     let mut dir: Vec2 = Vec2::ZERO;
 
@@ -278,8 +278,8 @@ fn move_player(
         facing.0 = FacingDirection::DownLeft;
     }
 
-    shoot_timer.0.tick(time.delta());
-    if input.pressed(KeyCode::Space) && shoot_timer.0.finished() && !buttons.pressed(MouseButton::Left){
+
+    if input.pressed(KeyCode::Space) && weapon.can_shoot() && !buttons.pressed(MouseButton::Left) {
         let bullet_dir = match facing.0 {
             FacingDirection::Up => Vec2::new(0.0, 1.0),
             FacingDirection::UpRight => Vec2::new(1.0, 1.0),
@@ -290,16 +290,21 @@ fn move_player(
             FacingDirection::Left => Vec2::new(-1.0, 0.0),
             FacingDirection::Right => Vec2::new(1.0, 0.0),
         };
+        
         spawn_bullet(
             &mut commands,
-            bullet_animate,
+            &bullet_res,
+            &weapon,
             Vec2 { x: transform.translation.x, y: transform.translation.y },
             bullet_dir,
         );
 
-        commands.spawn(AudioPlayer::new(laser_sound.0.clone()));
+        commands.spawn((
+            AudioPlayer::new(weapon_sounds.laser.clone()),
+            bevy::audio::PlaybackSettings::DESPAWN,
+        ));
 
-        shoot_timer.0.reset();
+        weapon.reset_timer();
     }
 
     //Time based on frame to ensure that movement is the same no matter the fps
@@ -496,124 +501,124 @@ fn update_player_sprite(
  * BULLET SECTION
  */
 
-fn load_bullet(
-    mut commands: Commands, 
-    asset_server: Res<AssetServer>,
-    mut texture_atlases: ResMut<Assets<TextureAtlasLayout>>,
-){  
-    //Bullet look
-    let bullet_animate_image: Handle<Image> = asset_server.load("bullet_animation.png");
+// fn load_bullet(
+//     mut commands: Commands, 
+//     asset_server: Res<AssetServer>,
+//     mut texture_atlases: ResMut<Assets<TextureAtlasLayout>>,
+// ){  
+//     //Bullet look
+//     let bullet_animate_image: Handle<Image> = asset_server.load("bullet_animation.png");
 
-    //Bullet size within image and layout
-    let bullet_animate_layout = TextureAtlasLayout::from_grid(UVec2::splat(100), 3, 1, None, None);
-    let bullet_animate_handle = texture_atlases.add(bullet_animate_layout);
+//     //Bullet size within image and layout
+//     let bullet_animate_layout = TextureAtlasLayout::from_grid(UVec2::splat(100), 3, 1, None, None);
+//     let bullet_animate_handle = texture_atlases.add(bullet_animate_layout);
 
-    commands.insert_resource(BulletRes(bullet_animate_image, bullet_animate_handle));
-}
+//     commands.insert_resource(BulletRes(bullet_animate_image, bullet_animate_handle));
+// }
 
-fn spawn_bullet(
-    commands: &mut Commands,
-    bullet_animate: Res<BulletRes>,
-    pos: Vec2,
-    dir: Vec2,
-){
+// fn spawn_bullet(
+//     commands: &mut Commands,
+//     bullet_animate: Res<BulletRes>,
+//     pos: Vec2,
+//     dir: Vec2,
+// ){
 
-    commands.spawn((
-        Sprite::from_atlas_image(
-            bullet_animate.0.clone(),
-            TextureAtlas { 
-                layout: bullet_animate.1.clone(),
-                index: 0, 
-            },
-        ),
-        Transform{
-            translation: Vec3::new(pos.x, pos.y, 910.),
-            scale: Vec3::splat(0.25),
-            ..Default::default()
-        },
-        AnimationTimer(Timer::from_seconds(0.2, TimerMode::Repeating)),
-        AnimationFrameCount(3),
-        Velocity::new_vec(dir.x, dir.y),
-        Bullet,
-        BulletOwner::Player,
-        Collider {
-            half_extents: Vec2::splat(5.0), // adjust to bullet size
-        },
-        GameEntity,
-    ));
-}
+//     commands.spawn((
+//         Sprite::from_atlas_image(
+//             bullet_animate.0.clone(),
+//             TextureAtlas { 
+//                 layout: bullet_animate.1.clone(),
+//                 index: 0, 
+//             },
+//         ),
+//         Transform{
+//             translation: Vec3::new(pos.x, pos.y, 910.),
+//             scale: Vec3::splat(0.25),
+//             ..Default::default()
+//         },
+//         AnimationTimer(Timer::from_seconds(0.2, TimerMode::Repeating)),
+//         AnimationFrameCount(3),
+//         Velocity::new_vec(dir.x, dir.y),
+//         Bullet,
+//         BulletOwner::Player,
+//         Collider {
+//             half_extents: Vec2::splat(5.0), // adjust to bullet size
+//         },
+//         GameEntity,
+//     ));
+// }
 
-fn move_bullet(
-    time: Res<Time>,
-    mut bullet: Query<(&mut Transform, &mut Velocity), With<Bullet>>,
-){
+// fn move_bullet(
+//     time: Res<Time>,
+//     mut bullet: Query<(&mut Transform, &mut Velocity), With<Bullet>>,
+// ){
 
-    for (mut transform, b) in &mut bullet {
-        let norm = b.normalize_or_zero();
+//     for (mut transform, b) in &mut bullet {
+//         let norm = b.normalize_or_zero();
 
-        transform.translation.x += norm.x * BULLET_SPD * time.delta_secs();
-        transform.translation.y += norm.y * BULLET_SPD * time.delta_secs();
-    }
-}
+//         transform.translation.x += norm.x * BULLET_SPD * time.delta_secs();
+//         transform.translation.y += norm.y * BULLET_SPD * time.delta_secs();
+//     }
+// }
 
-fn bullet_collision(
-    mut commands: Commands,
-    bullet_query: Query<(Entity, &Transform, &Collider), With<Bullet>>,
-    colliders: Query<(&Transform, &Collider), (With<Collidable>, Without<Player>, Without<Bullet>, Without<crate::enemy::Enemy>, Without<table::Table>, Without<crate::reward::Reward>)>,
-) {
-    for (bullet_entity, bullet_transform, bullet_collider) in &bullet_query {
-        let bx = bullet_transform.translation.x;
-        let by = bullet_transform.translation.y;
-        let b_half = bullet_collider.half_extents;
+// fn bullet_collision(
+//     mut commands: Commands,
+//     bullet_query: Query<(Entity, &Transform, &Collider), With<Bullet>>,
+//     colliders: Query<(&Transform, &Collider), (With<Collidable>, Without<Player>, Without<Bullet>, Without<crate::enemy::Enemy>, Without<table::Table>, Without<crate::reward::Reward>)>,
+// ) {
+//     for (bullet_entity, bullet_transform, bullet_collider) in &bullet_query {
+//         let bx = bullet_transform.translation.x;
+//         let by = bullet_transform.translation.y;
+//         let b_half = bullet_collider.half_extents;
 
-        // Check collision with all collidable entities
-        for (collider_transform, collider) in &colliders {
-            let cx = collider_transform.translation.x;
-            let cy = collider_transform.translation.y;
-            let c_half = collider.half_extents;
+//         // Check collision with all collidable entities
+//         for (collider_transform, collider) in &colliders {
+//             let cx = collider_transform.translation.x;
+//             let cy = collider_transform.translation.y;
+//             let c_half = collider.half_extents;
 
-            if aabb_overlap(bx, by, b_half, cx, cy, c_half) {
-                commands.entity(bullet_entity).despawn();
-                break;
-            }
-        }
-    }
-}
+//             if aabb_overlap(bx, by, b_half, cx, cy, c_half) {
+//                 commands.entity(bullet_entity).despawn();
+//                 break;
+//             }
+//         }
+//     }
+// }
 
-fn animate_bullet(
-    time: Res<Time>,
-    mut bullet: Query<
-        (
-            &mut Sprite,
-            &mut AnimationTimer,
-            &AnimationFrameCount,
-        ),
-        With<Bullet>,
-    >,
-) {
-    for (mut sprite, mut timer, frame_count) in &mut bullet{
-        timer.tick(time.delta());
+// fn animate_bullet(
+//     time: Res<Time>,
+//     mut bullet: Query<
+//         (
+//             &mut Sprite,
+//             &mut AnimationTimer,
+//             &AnimationFrameCount,
+//         ),
+//         With<Bullet>,
+//     >,
+// ) {
+//     for (mut sprite, mut timer, frame_count) in &mut bullet{
+//         timer.tick(time.delta());
 
-        if timer.just_finished() {
-            if let Some(atlas) = &mut sprite.texture_atlas {
-                atlas.index = (atlas.index + 1) % **frame_count;
-            }
-        }
-    }
-}
+//         if timer.just_finished() {
+//             if let Some(atlas) = &mut sprite.texture_atlas {
+//                 atlas.index = (atlas.index + 1) % **frame_count;
+//             }
+//         }
+//     }
+// }
 
 /**
  * This handles bullet enemy collision
 */
 fn bullet_hits_enemy(
     mut enemy_query: Query<(&Transform, &mut crate::enemy::Health), With<crate::enemy::Enemy>>,
-    bullet_query: Query<(&Transform, Entity, &BulletOwner), With<Bullet>>,
+    bullet_query: Query<(&Transform, Entity, &BulletOwner, &BulletDamage), With<Bullet>>,
     mut commands: Commands,
 ) {
     let bullet_half = Vec2::splat(TILE_SIZE * 0.5);
     let enemy_half = Vec2::splat(crate::enemy::ENEMY_SIZE * 0.5);
 
-    for (bullet_tf, bullet_entity, owner) in &bullet_query {
+    for (bullet_tf, bullet_entity, owner, damage) in &bullet_query {
         if !matches!(owner, BulletOwner::Player) {
             continue;
         }
@@ -625,7 +630,7 @@ fn bullet_hits_enemy(
                 bullet_pos.x, bullet_pos.y, bullet_half,
                 enemy_pos.x, enemy_pos.y, enemy_half,
             ) {
-                health.0 -= 25.0;
+                health.0 -= damage.0;  // Use weapon damage instead of hardcoded 25.0
                 commands.entity(bullet_entity).despawn();
                 break;
             }
