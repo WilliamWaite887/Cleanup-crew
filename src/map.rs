@@ -186,7 +186,6 @@ pub fn setup_tilemap(
     let nx = (cover_w / BG_WORLD).ceil() as i32;
     let ny = (cover_h / BG_WORLD).ceil() as i32;
 
-    let spawns = EnemySpawnPoints::default();
 
     let pad: i32 = 3;
     
@@ -216,6 +215,8 @@ pub fn setup_tilemap(
     // lets you pick the number of tables and an optional seed
     let generated_tables = generate_tables_from_grid(&level.level, 25, None);
     //generate_enemies_from_grid(&level.level, 15, None, &mut enemies, & rooms);
+    let enemy_spawns = generate_enemy_spawns_from_grid(&level.level, 15, &_rooms, None);
+    commands.insert_resource(EnemySpawnPoints(enemy_spawns));
 
     // positions we'll mark as breaches in the fluid grid 
     let breach_positions = Vec::new();
@@ -379,7 +380,6 @@ pub fn setup_tilemap(
     }
 
     // info!("Spawned {} enemy spawn points", spawns.0.len());
-    commands.insert_resource(spawns);
 }
 
 fn scroll_background(
@@ -439,4 +439,55 @@ fn follow_player(
             camera_transform. translation.y = target_y;
         }
     }
+}
+
+
+pub fn generate_enemy_spawns_from_grid(
+    grid: &[String],
+    max_enemies: usize,
+    room_vec: &RoomVec,
+    seed: Option<u64>,
+) -> Vec<Vec3> {
+    let rows = grid.len();
+    if rows == 0 {
+        return Vec::new();
+    }
+    
+    let map_center_x = (grid[0].len() / 2) as f32;
+    let map_center_y = (rows / 2) as f32;
+    
+    // Collect all floor cells ('#') that are NOT on room edges
+    let mut valid_spawns: Vec<Vec3> = Vec::new();
+    
+    for room in &room_vec.0 {
+        let x1 = room.tile_top_left_corner.x as usize;
+        let y1 = room.tile_top_left_corner.y as usize;
+        let x2 = room.tile_bot_right_corner.x as usize;
+        let y2 = room.tile_bot_right_corner.y as usize;
+        
+        // Only spawn in interior of rooms (not on edges)
+        for y in (y1 + 2)..=(y2.saturating_sub(2)) {
+            for x in (x1 + 2)..=(x2.saturating_sub(2)) {
+                if y < rows && x < grid[0].len() && grid[y].chars().nth(x) == Some('#') {
+                    // Convert to world coordinates
+                    let world_x = (x as f32 - map_center_x) * TILE_SIZE;
+                    let world_y = -(y as f32 - map_center_y) * TILE_SIZE;
+                    valid_spawns.push(Vec3::new(world_x, world_y, crate::Z_ENTITIES));
+                }
+            }
+        }
+    }
+    
+    // Shuffle and take max_enemies positions
+    use rand::seq::SliceRandom;
+    if let Some(s) = seed {
+        use rand::SeedableRng;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(s);
+        valid_spawns.shuffle(&mut rng);
+    } else {
+        let mut rng = rand::rng();
+        valid_spawns.shuffle(&mut rng);
+    }
+    
+    valid_spawns.into_iter().take(max_enemies).collect()
 }
