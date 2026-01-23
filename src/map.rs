@@ -215,8 +215,9 @@ pub fn setup_tilemap(
     // lets you pick the number of tables and an optional seed
     let generated_tables = generate_tables_from_grid(&level.level, 25, None);
     //generate_enemies_from_grid(&level.level, 15, None, &mut enemies, & rooms);
-    let enemy_spawns = generate_enemy_spawns_from_grid(&level.level, 15, &_rooms, None);
-    commands.insert_resource(EnemySpawnPoints(enemy_spawns));
+    // let enemy_spawns = generate_enemy_spawns_from_grid(&level.level, 15, &_rooms, None);
+    // commands.insert_resource(EnemySpawnPoints(enemy_spawns));
+    commands.insert_resource(EnemySpawnPoints(Vec::new()));
 
     // positions we'll mark as breaches in the fluid grid 
     let breach_positions = Vec::new();

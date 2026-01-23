@@ -502,7 +502,7 @@ pub fn apply_breach_forces_to_entities(
     time: Res<Time>,
     rooms: Res<RoomVec>,
     mut tables: Query<(&Transform, &mut crate::enemy::Velocity, &crate::fluiddynamics::PulledByFluid), With<crate::table::Table>>,
-    mut player: Query<(&Transform, &mut crate::player::Velocity, &crate::fluiddynamics::PulledByFluid), (With<crate::player::Player>, Without<crate::table::Table>)>,
+    mut player: Query<(&Transform, &mut crate::bullet::Velocity, &crate::fluiddynamics::PulledByFluid), (With<crate::player::Player>, Without<crate::table::Table>)>,  // Changed to bullet::Velocity
     mut enemies: Query<(&Transform, &mut crate::enemy::Velocity, &crate::fluiddynamics::PulledByFluid), (With<crate::enemy::Enemy>, Without<crate::player::Player>, Without<crate::table::Table>)>,
 ) {
     // Determine which room the player is in
