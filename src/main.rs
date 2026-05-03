@@ -1,6 +1,6 @@
 use crate::collidable::{Collidable, Collider};
 use crate::player::{Health, Player};
-use bevy::{prelude::*, window::PresentMode};
+use bevy::{prelude::*, window::{PresentMode, WindowMode}};
 use bevy::audio::Volume;
 use crate::air::{init_air_grid, spawn_pressure_labels, update_pressure_labels, update_air_on_window_break};
 use crate::room::RoomVec;
@@ -23,10 +23,11 @@ pub mod bullet;
 pub mod broom;
 pub mod rewards;
 pub mod heart;
-pub mod weapon;
+pub mod weapons;
 pub mod minimap;
 pub mod pause;
 pub mod settings;
+pub mod key_chest;
 
 pub const FONT_PATH: &str = "fonts/BitcountSingleInk-VariableFont_CRSV,ELSH,ELXP,SZP1,SZP2,XPN1,XPN2,YPN1,YPN2,slnt,wght.ttf";
 
@@ -127,6 +128,8 @@ pub struct SavedPlayerBuffs {
     pub regen_rate: f32,
     pub shield_max: f32,
     pub vacuum_mass: f32,
+    /// Extra weapons beyond the base Zapper (e.g. BeamRifle picked up from chest).
+    pub extra_weapons: Vec<weapons::WeaponType>,
 }
 
 #[derive(Component)]
@@ -159,6 +162,7 @@ fn main() {
                     primary_window: Some(Window {
                         title: TITLE.into(),
                         present_mode: PresentMode::AutoVsync,
+                        mode: WindowMode::BorderlessFullscreen(bevy::window::MonitorSelection::Current),
                         ..default()
                     }),
                     ..default()
@@ -170,6 +174,7 @@ fn main() {
         //Calls the plugin
         .init_resource::<ShowAirLabels>()
         .init_resource::<StationLevel>()
+        .init_resource::<settings::GameWindowMode>()
         .add_plugins((
             procgen::ProcGen,
             map::MapPlugin,
@@ -188,12 +193,13 @@ fn main() {
             rewards::RewardPlugin,
             heart::HeartPlugin,
             enemies::reaper::ReaperPlugin,
-            weapon::WeaponPlugin,
+            weapons::WeaponPlugin,
             minimap::MinimapPlugin,
             pause::PausePlugin,
             settings::SettingsPlugin,
+            key_chest::KeyChestPlugin,
         ))
-        .add_systems(Startup, (setup_camera, rewards::load_reward_font, maximize_window))
+        .add_systems(Startup, (setup_camera, rewards::load_reward_font))
         .add_systems(OnEnter(GameState::Menu), log_state_change)
         .add_systems(OnEnter(GameState::Loading), log_state_change)
         .add_systems(OnEnter(GameState::EndCredits), log_state_change)
@@ -311,7 +317,7 @@ fn check_return_to_airlock(
     mut next_state: ResMut<NextState<GameState>>,
     rooms: Res<RoomVec>,
     player_q: Query<(
-        &Health, &player::MaxHealth, &player::MoveSpeed, &weapon::Weapon,
+        &Health, &player::MaxHealth, &player::MoveSpeed, &weapons::WeaponInventory,
         &player::NumOfCleared, &player::Armor, &player::AirTank,
         &player::Regen, &player::Shield, &fluiddynamics::PulledByFluid,
         &Transform,
@@ -320,8 +326,9 @@ fn check_return_to_airlock(
 ) {
     if level_complete.is_none() { return; }
 
-    let Ok((health, max_hp, move_spd, weapon, _num_cleared, armor, tank, regen, shield, pull, transform))
+    let Ok((health, max_hp, move_spd, inventory, _num_cleared, armor, tank, regen, shield, pull, transform))
         = player_q.single() else { return; };
+    let weapon = inventory.current();
 
     let player_pos = transform.translation.truncate();
     let in_airlock = rooms.0.iter().any(|r| r.is_airlock && r.bounds_check(player_pos));
@@ -343,6 +350,10 @@ fn check_return_to_airlock(
         regen_rate: regen.0,
         shield_max: shield.max,
         vacuum_mass: pull.mass,
+        extra_weapons: inventory.weapons.iter()
+            .filter(|w| w.weapon_type != weapons::WeaponType::Zapper)
+            .map(|w| w.weapon_type)
+            .collect(),
     });
     next_state.set(GameState::Win);
 }
@@ -550,11 +561,6 @@ fn setup_camera(mut commands: Commands) {
     commands.spawn((Camera2d, MainCamera));
 }
 
-fn maximize_window(mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>) {
-    if let Ok(mut window) = windows.single_mut() {
-        window.set_maximized(true);
-    }
-}
 
 fn setup_ui_health(mut commands: Commands, asset_server: Res<AssetServer>, station_level: Res<StationLevel>) {
     let font: Handle<Font> = asset_server.load(FONT_PATH);
