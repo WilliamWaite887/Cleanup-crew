@@ -311,6 +311,7 @@ fn spawn_player(
 fn move_player(
     time: Res<Time>,
     input: Res<ButtonInput<KeyCode>>,
+    buttons: Res<ButtonInput<MouseButton>>,
     mut player: Query<(&mut Transform, &mut Velocity, &mut Facing, &MoveSpeed, &mut WeaponInventory), With<Player>>,
     mut next_state: ResMut<NextState<GameState>>,
     // Excludes permanent wall tiles and tables — tables are handled by player_deflects_tables.
@@ -319,6 +320,7 @@ fn move_player(
     mut commands: Commands,
     bullet_res: Res<BulletRes>,
     beam_res: Res<BeamRifleRes>,
+    weapon_sounds: Res<WeaponSounds>,
     grid_query: Query<&crate::fluiddynamics::FluidGrid>,
 ) {
     let Ok(grid) = grid_query.single() else {
