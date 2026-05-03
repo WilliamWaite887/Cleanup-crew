@@ -240,7 +240,7 @@ fn setup_menu(
                         for line in [
                             "Controls",
                             "WASD — Move          Shift — Dash",
-                            "Left Click / Space — Shoot",
+                            "Left Click — Shoot",
                             "B — Broom (sweep, deflect bullets, fix windows)",
                             "Tab — Toggle Minimap",
                             "M — Toggle Music       Esc — Pause",

@@ -9,7 +9,7 @@ use crate::enemies::HitAnimation;
 use crate::map::{LevelRes, MapGridMeta};
 use crate::fluiddynamics::PulledByFluid;
 use crate::bullet::{Bullet, Velocity};
-use crate::weapon::{Weapon, WeaponType, spawn_bullet, BulletRes, WeaponSounds};
+use crate::weapon::{Weapon, WeaponType};
 const WALL_SLIDE_FRICTION_MULTIPLIER: f32 = 0.92; // lower is more friction
 
 // #[derive(Resource)]
@@ -305,21 +305,17 @@ fn spawn_player(
 fn move_player(
     time: Res<Time>,
     input: Res<ButtonInput<KeyCode>>,
-    mut player: Query<(&mut Transform, &mut Velocity, &mut Facing, &MoveSpeed, &mut Weapon), With<Player>>,
+    mut player: Query<(&mut Transform, &mut Velocity, &mut Facing, &MoveSpeed), With<Player>>,
     mut next_state: ResMut<NextState<GameState>>,
     // Excludes permanent wall tiles and tables — tables are handled by player_deflects_tables.
     colliders: Query<(&Transform, &Collider), (With<Collidable>, Without<Player>, Without<Bullet>, Without<Broom>, Without<crate::map::WallTile>, Without<table::Table>)>,
     wall_grid: Res<crate::map::WallGrid>,
-    mut commands: Commands,
-    bullet_res: Res<BulletRes>,
     grid_query: Query<&crate::fluiddynamics::FluidGrid>,
-    buttons: Res<ButtonInput<MouseButton>>,
-    weapon_sounds: Res<WeaponSounds>,
 ) {
     let Ok(grid) = grid_query.single() else {
         return;
     };
-    let Ok((mut transform, mut velocity, mut facing, spd, mut weapon)) = player.single_mut() else {
+    let Ok((mut transform, mut velocity, mut facing, spd)) = player.single_mut() else {
         return;
     };
 
@@ -359,34 +355,6 @@ fn move_player(
         facing.0 = FacingDirection::DownLeft;
     }
 
-
-    if input.pressed(KeyCode::Space) && weapon.can_shoot() && !buttons.pressed(MouseButton::Left) {
-        let bullet_dir = match facing.0 {
-            FacingDirection::Up => Vec2::new(0.0, 1.0),
-            FacingDirection::UpRight => Vec2::new(1.0, 1.0),
-            FacingDirection::UpLeft => Vec2::new(-1.0, 1.0),
-            FacingDirection::Down => Vec2::new(0.0, -1.0),
-            FacingDirection::DownRight => Vec2::new(1.0, -1.0),
-            FacingDirection::DownLeft => Vec2::new(-1.0, -1.0),
-            FacingDirection::Left => Vec2::new(-1.0, 0.0),
-            FacingDirection::Right => Vec2::new(1.0, 0.0),
-        };
-        
-        spawn_bullet(
-            &mut commands,
-            &bullet_res,
-            &weapon,
-            Vec2 { x: transform.translation.x, y: transform.translation.y },
-            bullet_dir,
-        );
-
-        commands.spawn((
-            AudioPlayer::new(weapon_sounds.laser.clone()),
-            bevy::audio::PlaybackSettings::DESPAWN,
-        ));
-
-        weapon.reset_timer();
-    }
 
     //Time based on frame to ensure that movement is the same no matter the fps
     let deltat = time.delta_secs();
