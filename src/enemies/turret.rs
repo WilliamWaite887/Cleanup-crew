@@ -201,6 +201,7 @@ pub fn spawn_turret_bullets(
     mut events: EventReader<TurretShootEvent>,
     bullet_res: Res<EnemyBulletRes>,
     weapon_sounds: Res<WeaponSounds>,
+    mut sfx_cooldown: ResMut<crate::weapons::SfxCooldown>,
 ) {
     for ev in events.read() {
         // Odd frame indices (files 2,4,6,8) are 45-degree rotated — fire diagonally.
@@ -233,9 +234,12 @@ pub fn spawn_turret_bullets(
             ));
         }
 
-        commands.spawn((
-            AudioPlayer::new(weapon_sounds.laser.clone()),
-            PlaybackSettings::DESPAWN,
-        ));
+        if sfx_cooldown.enemy_laser <= 0.0 {
+            sfx_cooldown.enemy_laser = 0.12;
+            commands.spawn((
+                AudioPlayer::new(weapon_sounds.laser.clone()),
+                PlaybackSettings { volume: bevy::audio::Volume::Linear(0.4), ..PlaybackSettings::DESPAWN },
+            ));
+        }
     }
 }

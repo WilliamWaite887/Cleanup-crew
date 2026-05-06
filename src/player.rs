@@ -354,6 +354,7 @@ fn move_player(
     weapon_sounds: Res<WeaponSounds>,
     grid_query: Query<&crate::fluiddynamics::FluidGrid>,
     bindings: Res<crate::settings::KeyBindings>,
+    mut sfx_cooldown: ResMut<crate::weapons::SfxCooldown>,
 ) {
     let Ok(grid) = grid_query.single() else {
         return;
@@ -417,6 +418,7 @@ fn move_player(
             &bullet_res,
             &beam_res,
             &weapon_sounds,
+            &mut sfx_cooldown,
             transform.translation.truncate(),
             bullet_dir,
         );

@@ -2,7 +2,7 @@ use crate::Player;
 
 use crate::player::{Health, MaxHealth, MoveSpeed, Shield};
 use crate::room::{LevelState, RoomVec};
-use crate::weapons::{BulletDamage, BulletRes, BeamRifleRes, WeaponInventory, WeaponSounds, fire_weapon};
+use crate::weapons::{BulletDamage, BulletRes, BeamRifleRes, WeaponInventory, WeaponSounds, SfxCooldown, fire_weapon};
 use crate::window;
 use crate::{GameState, TILE_SIZE};
 use crate::table;
@@ -77,6 +77,7 @@ pub fn shoot_bullet_on_click(
     bullet_res: Res<BulletRes>,
     beam_res: Res<BeamRifleRes>,
     weapon_sounds: Res<WeaponSounds>,
+    mut sfx_cooldown: ResMut<SfxCooldown>,
 ) {
     let Ok((player_transform, mut inventory)) = q_player.single_mut() else {
         return;
@@ -116,6 +117,7 @@ pub fn shoot_bullet_on_click(
             &bullet_res,
             &beam_res,
             &weapon_sounds,
+            &mut sfx_cooldown,
             spawn_pos,
             dir_vec,
         );

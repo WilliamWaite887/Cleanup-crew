@@ -209,6 +209,7 @@ pub fn spawn_ranger_bullets(
     mut events: EventReader<RangerShootEvent>,
     bullet_res: Res<EnemyBulletRes>,
     weapon_sounds: Res<WeaponSounds>,
+    mut sfx_cooldown: ResMut<crate::weapons::SfxCooldown>,
 ) {
     for ev in events.read() {
         let dir = ev.direction.normalize_or_zero();
@@ -235,9 +236,12 @@ pub fn spawn_ranger_bullets(
             GameEntity,
         ));
 
-        commands.spawn((
-            AudioPlayer::new(weapon_sounds.laser.clone()),
-            PlaybackSettings::DESPAWN,
-        ));
+        if sfx_cooldown.enemy_laser <= 0.0 {
+            sfx_cooldown.enemy_laser = 0.12;
+            commands.spawn((
+                AudioPlayer::new(weapon_sounds.laser.clone()),
+                PlaybackSettings { volume: bevy::audio::Volume::Linear(0.4), ..PlaybackSettings::DESPAWN },
+            ));
+        }
     }
 }
