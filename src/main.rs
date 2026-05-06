@@ -151,6 +151,9 @@ pub struct SavedPlayerBuffs {
     pub vacuum_mass: f32,
     /// All weapons in inventory with their accumulated stats.
     pub weapons: Vec<SavedWeapon>,
+    pub atk_speed_stacks: u32,
+    pub damage_stacks: u32,
+    pub piercing_stacks: u32,
 }
 
 #[derive(Component)]
@@ -360,13 +363,13 @@ fn check_return_to_airlock(
         &Health, &player::MaxHealth, &player::MoveSpeed, &weapons::WeaponInventory,
         &player::NumOfCleared, &player::Armor, &player::AirTank,
         &player::Regen, &player::Shield, &fluiddynamics::PulledByFluid,
-        &Transform,
+        &Transform, &player::WeaponBuffStacks,
     ), With<Player>>,
     level_complete: Option<Res<LevelComplete>>,
 ) {
     if level_complete.is_none() { return; }
 
-    let Ok((health, max_hp, move_spd, inventory, _num_cleared, armor, tank, regen, shield, pull, transform))
+    let Ok((health, max_hp, move_spd, inventory, _num_cleared, armor, tank, regen, shield, pull, transform, buff_stacks))
         = player_q.single() else { return; };
     let player_pos = transform.translation.truncate();
     let in_airlock = rooms.0.iter().any(|r| r.is_airlock && r.bounds_check(player_pos));
@@ -391,6 +394,9 @@ fn check_return_to_airlock(
             damage: w.damage,
             piercing_pickups: w.piercing_pickups,
         }).collect(),
+        atk_speed_stacks: buff_stacks.atk_speed,
+        damage_stacks:     buff_stacks.damage,
+        piercing_stacks:   buff_stacks.piercing,
     });
     next_state.set(GameState::Win);
 }

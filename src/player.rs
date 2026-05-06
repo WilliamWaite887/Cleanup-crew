@@ -90,6 +90,15 @@ pub struct ThrusterFuel {
 #[derive(Component)]
 pub struct DashInvincibility(pub Timer);
 
+/// Counts how many times each weapon buff has been picked up so new weapons
+/// added mid-run (e.g., from a chest) receive the same buffs.
+#[derive(Component, Default, Clone)]
+pub struct WeaponBuffStacks {
+    pub atk_speed: u32,
+    pub damage: u32,
+    pub piercing: u32,
+}
+
 // #[derive(Resource)]
 // pub struct BulletRes(Handle<Image>, Handle<TextureAtlasLayout>);
 
@@ -271,6 +280,16 @@ fn spawn_player(
             (100.0, 100.0, 1.0, 0, 0.0, 5.0, 1.0, 0.0, 0.0, 50.0)
         };
 
+    let buff_stacks = if let Some(buffs) = &saved_buffs {
+        WeaponBuffStacks {
+            atk_speed: buffs.atk_speed_stacks,
+            damage:    buffs.damage_stacks,
+            piercing:  buffs.piercing_stacks,
+        }
+    } else {
+        WeaponBuffStacks::default()
+    };
+
     let inventory = if let Some(buffs) = &saved_buffs {
         if buffs.weapons.is_empty() {
             WeaponInventory::new(Weapon::new(WeaponType::Zapper))
@@ -309,7 +328,7 @@ fn spawn_player(
         Collider { half_extents: Vec2::new(TILE_SIZE * 0.5, TILE_SIZE * 1.0) },
         Facing(FacingDirection::Down),
         NumOfCleared(num_cleared),
-        (PulledByFluid{mass: vacuum_mass}, AirTank::new(tank_max, tank_drain), ThrusterFuel { current: 3.0, max: 3.0 }),
+        (PulledByFluid{mass: vacuum_mass}, AirTank::new(tank_max, tank_drain), ThrusterFuel { current: 3.0, max: 3.0 }, buff_stacks),
         inventory,
         GameEntity,
     ));

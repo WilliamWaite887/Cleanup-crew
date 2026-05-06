@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use rand::random_range;
 use crate::collidable::{Collidable, Collider};
 use crate::{GameEntity, GameState, TILE_SIZE, Z_ENTITIES};
-use crate::player::{Player, aabb_overlap};
+use crate::player::{Player, WeaponBuffStacks, aabb_overlap};
 use crate::enemies::Enemy;
 use crate::room::LevelState;
 
@@ -192,6 +192,7 @@ fn interact_with_chest(
     player_q: Query<&Transform, With<Player>>,
     chest_q: Query<(Entity, &Transform), With<Chest>>,
     mut inventory_q: Query<&mut crate::weapons::WeaponInventory, With<Player>>,
+    buff_stacks_q: Query<&WeaponBuffStacks, With<Player>>,
     bindings: Res<crate::settings::KeyBindings>,
 ) {
     if !input.just_pressed(bindings.interact) { return; }
@@ -208,7 +209,23 @@ fn interact_with_chest(
             commands.entity(entity).despawn();
             key_state.has_key = false;
             if let Ok(mut inv) = inventory_q.single_mut() {
-                inv.weapons.push(crate::weapons::Weapon::new(crate::weapons::WeaponType::BeamRifle));
+                let new_type = crate::weapons::WeaponType::BeamRifle;
+                let already_owned = inv.weapons.iter().any(|w| w.weapon_type == new_type);
+                if !already_owned {
+                    let mut new_weapon = crate::weapons::Weapon::new(new_type);
+                    if let Ok(stacks) = buff_stacks_q.single() {
+                        for _ in 0..stacks.atk_speed {
+                            crate::rewards::atk_speed::apply(&mut new_weapon);
+                        }
+                        for _ in 0..stacks.damage {
+                            crate::rewards::damage_up::apply(&mut new_weapon);
+                        }
+                        for _ in 0..stacks.piercing {
+                            crate::rewards::piercing::apply(&mut new_weapon);
+                        }
+                    }
+                    inv.weapons.push(new_weapon);
+                }
             }
             break;
         }
