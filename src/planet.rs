@@ -93,10 +93,16 @@ const BOSS_SPAWN: Vec3 = Vec3::new(16.0, 176.0, Z_ENTITIES);
 fn setup_planet_level(mut commands: Commands) {
     // Inject the planet map so load_map reads it instead of the procgen grid.
     use std::io::{BufRead, BufReader};
-    let file = std::fs::File::open(PLANET_MAP_FILE).expect("planet_level.txt not found");
+    let file = match std::fs::File::open(PLANET_MAP_FILE) {
+        Ok(f) => f,
+        Err(e) => {
+            warn!("Could not open planet level file '{}': {e}", PLANET_MAP_FILE);
+            return;
+        }
+    };
     let rows: Vec<String> = BufReader::new(file)
         .lines()
-        .map(|l| l.expect("line read error"))
+        .filter_map(|l| l.ok())
         .collect();
     commands.insert_resource(GeneratedLevel(rows));
 

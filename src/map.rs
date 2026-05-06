@@ -200,10 +200,18 @@ fn load_map(
         }
     } else {
         // Test room or other override: read from the specified file
-        let f = File::open(&level_to_load.0).expect("level file not found");
-        let reader = BufReader::new(f);
-        for line_result in reader.lines() {
-            level.level.push(line_result.unwrap());
+        match File::open(&level_to_load.0) {
+            Ok(f) => {
+                let reader = BufReader::new(f);
+                for line_result in reader.lines() {
+                    if let Ok(line) = line_result {
+                        level.level.push(line);
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Could not open level file '{}': {e}", level_to_load.0);
+            }
         }
     }
     commands.insert_resource(level);
