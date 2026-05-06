@@ -1,6 +1,7 @@
 use crate::collidable::{Collidable, Collider};
 use crate::player::{Health, Player, ThrusterFuel};
 use bevy::{prelude::*, window::{PresentMode, WindowMode}};
+use bevy::render::{RenderPlugin, settings::{RenderCreation, WgpuSettings, Backends}};
 use bevy::audio::Volume;
 use crate::air::{init_air_grid, spawn_pressure_labels, update_pressure_labels, update_air_on_window_break};
 use crate::room::RoomVec;
@@ -180,6 +181,15 @@ fn main() {
                         title: TITLE.into(),
                         present_mode: PresentMode::AutoVsync,
                         mode: WindowMode::BorderlessFullscreen(bevy::window::MonitorSelection::Current),
+                        ..default()
+                    }),
+                    ..default()
+                })
+                // Prefer DX12 over Vulkan on Windows — avoids "Parent device is lost"
+                // GPU crashes that occur when loading heavy scenes via the Vulkan backend.
+                .set(RenderPlugin {
+                    render_creation: RenderCreation::Automatic(WgpuSettings {
+                        backends: Some(Backends::DX12),
                         ..default()
                     }),
                     ..default()
