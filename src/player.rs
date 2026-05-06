@@ -85,6 +85,11 @@ pub struct ThrusterFuel {
     pub max: f32,
 }
 
+/// Brief invincibility window inserted on the player when they dash.
+/// Removed automatically when the timer expires.
+#[derive(Component)]
+pub struct DashInvincibility(pub Timer);
+
 // #[derive(Resource)]
 // pub struct BulletRes(Handle<Image>, Handle<TextureAtlasLayout>);
 
@@ -152,6 +157,7 @@ impl Plugin for PlayerPlugin {
             // .add_systems(Startup, load_bullet)
             .add_systems(OnEnter(GameState::Playing), spawn_player.after(load_player))
             .add_systems(Update, regen_system.run_if(in_state(GameState::Playing)))
+            .add_systems(Update, tick_dash_invincibility.run_if(in_state(GameState::Playing)))
             .add_systems(Update, thruster_regen_system.run_if(in_state(GameState::Playing)))
             .add_systems(Update, thruster_dodge_system.run_if(in_state(GameState::Playing)).run_if(not(resource_exists::<crate::pause::IsPaused>)))
             .add_systems(Update, move_player.run_if(in_state(GameState::Playing)).run_if(not(resource_exists::<crate::pause::IsPaused>)))
@@ -297,7 +303,7 @@ fn spawn_player(
         Collider { half_extents: Vec2::new(TILE_SIZE * 0.5, TILE_SIZE * 1.0) },
         Facing(FacingDirection::Down),
         NumOfCleared(num_cleared),
-        (PulledByFluid{mass: vacuum_mass}, AirTank::new(tank_max, tank_drain), ThrusterFuel { current: 0.0, max: 0.0 }),
+        (PulledByFluid{mass: vacuum_mass}, AirTank::new(tank_max, tank_drain), ThrusterFuel { current: 3.0, max: 3.0 }),
         inventory,
         GameEntity,
     ));
@@ -523,15 +529,29 @@ impl DamageTimer {
 }
 }
 
+fn tick_dash_invincibility(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut q: Query<(Entity, &mut DashInvincibility)>,
+) {
+    for (entity, mut inv) in &mut q {
+        inv.0.tick(time.delta());
+        if inv.0.finished() {
+            commands.entity(entity).remove::<DashInvincibility>();
+        }
+    }
+}
+
 fn enemy_hits_player(
     time: Res<Time>,
-    mut player_query: Query<(&Transform, &mut crate::player::Health, &mut DamageTimer, &Armor, &mut Shield), With<crate::player::Player>>,
+    mut player_query: Query<(&Transform, &mut crate::player::Health, &mut DamageTimer, &Armor, &mut Shield, Option<&DashInvincibility>), With<crate::player::Player>>,
     enemy_query: Query<(Entity, &Transform, &crate::enemies::Health), With<Enemy>>,
     mut commands: Commands,
 ) {
     let player_half = Vec2::splat(32.0);
     let enemy_half = Vec2::splat(ENEMY_SIZE * 0.5);
-    for (player_tf, mut health, mut damage_timer, armor, mut shield) in &mut player_query {
+    for (player_tf, mut health, mut damage_timer, armor, mut shield, dash_inv) in &mut player_query {
+        if dash_inv.is_some() { continue; }
 
         damage_timer.0.tick(time.delta());
 
@@ -848,14 +868,15 @@ fn thruster_regen_system(
 }
 
 fn thruster_dodge_system(
+    mut commands: Commands,
     input: Res<ButtonInput<KeyCode>>,
-    mut q_player: Query<(&Transform, &mut Velocity, &mut ThrusterFuel), With<Player>>,
+    mut q_player: Query<(Entity, &Transform, &mut Velocity, &mut ThrusterFuel), With<Player>>,
     q_window: Query<&Window, With<PrimaryWindow>>,
     q_camera: Query<(&Camera, &GlobalTransform)>,
 ) {
     if !input.just_pressed(KeyCode::ShiftLeft) { return; }
 
-    let Ok((player_tf, mut velocity, mut fuel)) = q_player.single_mut() else { return; };
+    let Ok((player_entity, player_tf, mut velocity, mut fuel)) = q_player.single_mut() else { return; };
     if fuel.max <= 0.0 || fuel.current < 1.0 { return; }
 
     let Ok(window) = q_window.single() else { return; };
@@ -869,4 +890,8 @@ fn thruster_dodge_system(
 
     velocity.0 = dir * 1000.0;
     fuel.current -= 1.0;
+
+    commands.entity(player_entity).insert(DashInvincibility(
+        Timer::from_seconds(0.15, TimerMode::Once),
+    ));
 }

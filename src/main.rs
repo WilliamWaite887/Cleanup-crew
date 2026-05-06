@@ -1,5 +1,5 @@
 use crate::collidable::{Collidable, Collider};
-use crate::player::{Health, Player};
+use crate::player::{Health, Player, ThrusterFuel};
 use bevy::{prelude::*, window::{PresentMode, WindowMode}};
 use bevy::audio::Volume;
 use crate::air::{init_air_grid, spawn_pressure_labels, update_pressure_labels, update_air_on_window_break};
@@ -60,6 +60,10 @@ struct ShieldBarFill;
 #[derive(Component)]
 struct ShieldBarRow;
 
+
+/// One thruster-fuel dot in the HUD. Index indicates which charge slot it represents (0-based).
+#[derive(Component)]
+struct ThrusterDot(usize);
 
 /// Marker added to every music audio entity so the volume sync system can find them.
 #[derive(Component)]
@@ -661,6 +665,34 @@ fn setup_ui_health(mut commands: Commands, asset_server: Res<AssetServer>, stati
                 });
             });
 
+            // ── Thruster fuel row ────────────────────────────────────────
+            col.spawn((Node {
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(4.0),
+                ..default()
+            },))
+            .with_children(|row| {
+                row.spawn((Node::default(),)).with_children(|c| {
+                    c.spawn((
+                        Text::new("DASH"),
+                        TextFont { font: font.clone(), font_size: 14.0, ..default() },
+                        TextColor(Color::srgb(0.4, 0.9, 1.0)),
+                    ));
+                });
+                for i in 0..10usize {
+                    row.spawn((
+                        Node {
+                            width: Val::Px(12.0),
+                            height: Val::Px(12.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.05, 0.15, 0.2, 0.9)),
+                        BorderRadius::all(Val::Px(3.0)),
+                        ThrusterDot(i),
+                    ));
+                }
+            });
+
             // ── Station label ────────────────────────────────────────────
             col.spawn((Node::default(),)).with_children(|c| {
                 c.spawn((
@@ -674,12 +706,13 @@ fn setup_ui_health(mut commands: Commands, asset_server: Res<AssetServer>, stati
 }
 
 fn update_ui_health_text(
-    player_q: Query<(&Health, &player::MaxHealth, &player::Shield), With<Player>>,
+    player_q: Query<(&Health, &player::MaxHealth, &player::Shield, &ThrusterFuel), With<Player>>,
     mut hp_fill_q: Query<(&mut Node, &mut BackgroundColor), (With<HealthBarFill>, Without<ShieldBarFill>)>,
     mut sh_fill_q: Query<(&mut Node, &mut BackgroundColor), (With<ShieldBarFill>, Without<HealthBarFill>)>,
-    mut sh_row_q: Query<&mut Visibility, With<ShieldBarRow>>,
+    mut sh_row_q: Query<&mut Visibility, (With<ShieldBarRow>, Without<ThrusterDot>)>,
+    mut dot_q: Query<(&ThrusterDot, &mut BackgroundColor, &mut Visibility), (Without<HealthBarFill>, Without<ShieldBarFill>, Without<ShieldBarRow>)>,
 ) {
-    let Ok((health, max_hp, shield)) = player_q.single() else { return };
+    let Ok((health, max_hp, shield, fuel)) = player_q.single() else { return };
 
     // HP bar width + color
     if let Ok((mut node, mut color)) = hp_fill_q.single_mut() {
@@ -698,6 +731,23 @@ fn update_ui_health_text(
         if let Ok((mut node, _)) = sh_fill_q.single_mut() {
             let ratio = (shield.current / shield.max).clamp(0.0, 1.0);
             node.width = Val::Percent(ratio * 100.0);
+        }
+    }
+
+    // Thruster fuel dots
+    let max_charges = fuel.max as usize;
+    let full_charges = fuel.current.floor() as usize;
+    for (dot, mut color, mut vis) in &mut dot_q {
+        let i = dot.0;
+        if i >= max_charges {
+            *vis = Visibility::Hidden;
+        } else {
+            *vis = Visibility::Visible;
+            *color = if i < full_charges {
+                BackgroundColor(Color::srgb(0.2, 0.85, 1.0))
+            } else {
+                BackgroundColor(Color::srgba(0.05, 0.15, 0.2, 0.9))
+            };
         }
     }
 }

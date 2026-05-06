@@ -118,7 +118,7 @@ pub fn spawn_reward(commands: &mut Commands, pos: Vec3, box_sprite: &RewardRes) 
         9  => box_sprite.piercing.clone(),
         10 => box_sprite.damage_up.clone(),
         11 => box_sprite.shield_burst.clone(),
-        _  => panic!("reward image out of range"),
+        _  => { warn!("spawn_reward: type {} out of range, defaulting to max_hp", reward_type); box_sprite.max_hp.clone() }
     };
 
     commands.spawn((
@@ -177,7 +177,7 @@ pub fn player_pickup_reward(
                 9  => piercing::apply(weapon),
                 10 => damage_up::apply(weapon),
                 11 => shield::apply(&mut shld),
-                _  => panic!("Reward Type Not Found"),
+                _  => { warn!("player_pickup_reward: unknown type {}, defaulting to max_hp", reward_type.0); max_hp::apply(&mut hp, &mut maxhp) }
             }
         }
 

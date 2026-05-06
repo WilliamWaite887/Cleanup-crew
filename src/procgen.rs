@@ -203,7 +203,7 @@ impl RoomRes {
             4 => &self.room4,
             5 => &self.room5,
             6 => &self.room6,
-            _ => panic!("Room doesn't exist"),
+            _ => { warn!("room({}) out of range, falling back to room1", n); &self.room1 }
         }
     }
 
@@ -216,7 +216,7 @@ impl RoomRes {
             4 => &mut self.room4,
             5 => &mut self.room5,
             6 => &mut self.room6,
-            _ => panic!("Room doesn't exist"),
+            _ => { warn!("room_mut({}) out of range, falling back to room1", n); &mut self.room1 }
         }
     }
 }
