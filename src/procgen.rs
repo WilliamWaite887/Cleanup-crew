@@ -232,11 +232,13 @@ impl Plugin for ProcGen {
                 load_rooms.in_set(ProcgenSet::LoadRooms),
             )
             // label the BSP/full-level build and order it after load-rooms
+            // Skip when the planet plugin has already injected the level.
             .add_systems(
                 OnEnter(GameState::Loading),
                 build_full_level
                     .in_set(ProcgenSet::BuildFullLevel)
-                    .after(ProcgenSet::LoadRooms),
+                    .after(ProcgenSet::LoadRooms)
+                    .run_if(not(resource_exists::<crate::PlanetLevelMarker>)),
             );
             app.insert_resource(WindowConfig {
                 density: 0.6,

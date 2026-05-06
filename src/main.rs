@@ -7,6 +7,7 @@ use crate::room::RoomVec;
 
 pub mod collidable;
 pub mod endcredits;
+pub mod planet;
 pub mod enemies;
 pub mod player;
 pub mod table;
@@ -93,6 +94,7 @@ pub enum EndScreenButtons{
     MainMenu,
     Continue,
     Leave,
+    EnterPlanet,
 }
 
 #[derive(Component)]
@@ -115,6 +117,14 @@ pub struct StationLevel(pub u32);
 impl Default for StationLevel {
     fn default() -> Self { Self(0) }
 }
+
+/// Inserted before entering GameState::Loading when the next level is the planet.
+#[derive(Resource)]
+pub struct PlanetLevelMarker;
+
+/// How many planet levels have been cleared this run.
+#[derive(Resource, Default)]
+pub struct PlanetCount(pub u32);
 
 /// Saved player buffs carried between stations on "Continue".
 #[derive(Resource, Clone)]
@@ -155,6 +165,7 @@ enum GameState {
     GameOver,
     EndCredits,
     Win,
+    PlanetWin,
 }
 
 fn main() {
@@ -180,6 +191,7 @@ fn main() {
         //Calls the plugin
         .init_resource::<ShowAirLabels>()
         .init_resource::<StationLevel>()
+        .init_resource::<PlanetCount>()
         .insert_resource(saved_mode)
         .add_plugins((
             procgen::ProcGen,
@@ -204,6 +216,7 @@ fn main() {
             pause::PausePlugin,
             settings::SettingsPlugin,
             key_chest::KeyChestPlugin,
+            planet::PlanetPlugin,
         ))
         .add_systems(Startup, (setup_camera, rewards::load_reward_font))
         .add_systems(OnEnter(GameState::Menu), log_state_change)
@@ -228,6 +241,7 @@ fn main() {
         .add_systems(OnExit(GameState::Playing), remove_level_complete)
         .add_systems(Update, handle_end_screen_buttons.run_if(in_state(GameState::GameOver)))
         .add_systems(Update, handle_end_screen_buttons.run_if(in_state(GameState::Win)))
+        .add_systems(Update, handle_end_screen_buttons.run_if(in_state(GameState::PlanetWin)))
         .add_systems(OnExit(GameState::GameOver), clean_end_screen)
         .add_systems(OnExit(GameState::Win), clean_end_screen)
 
@@ -278,8 +292,11 @@ fn check_win(
     rooms: Res<RoomVec>,
     reaper_q: Query<(), With<enemies::Reaper>>,
     level_complete: Option<Res<LevelComplete>>,
+    planet_marker: Option<Res<PlanetLevelMarker>>,
     asset_server: Res<AssetServer>,
 ){
+    // Planet level has its own win condition in planet.rs.
+    if planet_marker.is_some() { return; }
     // Only fire once.
     if level_complete.is_some() { return; }
 
@@ -420,7 +437,7 @@ fn load_win(
             ));
         });
 
-        // Button column — just two choices from the airlock
+        // Button column
         root.spawn((
             Node {
                 width: Val::Percent(100.0),
@@ -437,6 +454,32 @@ fn load_win(
             },
         ))
         .with_children(|col|{
+            // Enter Planet — available every 3rd station
+            if (station_level.0 + 1) % 3 == 0 {
+                col.spawn((
+                    Button,
+                    EndScreenButtons::EnterPlanet,
+                    Node {
+                        width: Val::Px(420.0),
+                        height: Val::Px(60.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        padding: UiRect::all(Val::Px(8.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.0, 0.3, 0.4, 0.9)),
+                    BorderColor(Color::srgba(0.2, 0.8, 1.0, 0.9)),
+                    BorderRadius::all(Val::Px(6.0)),
+                ))
+                .with_children(|b| {
+                    b.spawn((
+                        Text::new("Descend to Planet"),
+                        TextFont { font: font.clone(), font_size: 28.0, ..default() },
+                        TextColor(Color::WHITE),
+                    ));
+                });
+            }
+
             // Continue — board the next station, keep buffs
             col.spawn((
                 Button,
@@ -889,6 +932,10 @@ fn handle_end_screen_buttons(
                 station_level.0 = 0;
                 commands.remove_resource::<SavedPlayerBuffs>();
                 next_state.set(GameState::Menu);
+            }
+            EndScreenButtons::EnterPlanet => {
+                commands.insert_resource(PlanetLevelMarker);
+                next_state.set(GameState::Loading);
             }
         }
     }
