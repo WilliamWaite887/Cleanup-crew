@@ -164,18 +164,17 @@ pub fn player_pickup_reward(
         }
 
         if let Ok(mut inv) = player_weapon_q.single_mut() {
-            let weapon = inv.current_mut();
             match reward_type.0 {
                 1  => max_hp::apply(&mut hp, &mut maxhp),
-                2  => atk_speed::apply(weapon),
+                2  => { for w in &mut inv.weapons { atk_speed::apply(w); } }
                 3  => move_speed::apply(&mut movspd, &mut fuel),
                 4  => armor::apply(&mut arm),
                 5  => air_tank::apply(&mut tank),
                 6  => drain_rate::apply(&mut tank),
                 7  => vacuum_res::apply(&mut pull),
                 8  => regen::apply(&mut reg),
-                9  => piercing::apply(weapon),
-                10 => damage_up::apply(weapon),
+                9  => { for w in &mut inv.weapons { piercing::apply(w); } }
+                10 => { for w in &mut inv.weapons { damage_up::apply(w); } }
                 11 => shield::apply(&mut shld),
                 _  => { warn!("player_pickup_reward: unknown type {}, defaulting to max_hp", reward_type.0); max_hp::apply(&mut hp, &mut maxhp) }
             }

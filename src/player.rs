@@ -254,34 +254,40 @@ fn spawn_player(
     let world_y = grid.y0 + (grid.rows as f32 - 1.0 - gy as f32) * TILE_SIZE + y_player_spawn_offset;
 
     // Apply saved buffs from previous station if continuing, otherwise use defaults
-    let (hp, max_hp, move_speed, fire_rate, num_cleared, armor, tank_max, tank_drain,
-         weapon_damage, piercing, regen_rate, shield_max, vacuum_mass) =
+    let (hp, max_hp, move_speed, num_cleared, armor, tank_max, tank_drain,
+         regen_rate, shield_max, vacuum_mass) =
         if let Some(buffs) = &saved_buffs {
             info!(
-                "Applying saved buffs: max_hp={}, hp={}, move_spd={}, fire_rate={}, cleared={}, armor={}, tank_max={}, tank_drain={}",
-                buffs.max_health, buffs.health, buffs.move_speed, buffs.fire_rate,
+                "Applying saved buffs: max_hp={}, hp={}, move_spd={}, cleared={}, armor={}, tank_max={}, tank_drain={}",
+                buffs.max_health, buffs.health, buffs.move_speed,
                 buffs.num_cleared, buffs.armor, buffs.air_tank_max, buffs.air_tank_drain_rate
             );
             (
-                buffs.health, buffs.max_health, buffs.move_speed, buffs.fire_rate,
+                buffs.health, buffs.max_health, buffs.move_speed,
                 buffs.num_cleared, buffs.armor, buffs.air_tank_max, buffs.air_tank_drain_rate,
-                buffs.weapon_damage, buffs.piercing_pickups, buffs.regen_rate, buffs.shield_max, buffs.vacuum_mass,
+                buffs.regen_rate, buffs.shield_max, buffs.vacuum_mass,
             )
         } else {
-            (100.0, 100.0, 1.0, 0.5, 0, 0.0, 5.0, 1.0, 25.0, 0u32, 0.0, 0.0, 50.0)
+            (100.0, 100.0, 1.0, 0, 0.0, 5.0, 1.0, 0.0, 0.0, 50.0)
         };
 
-    let mut weapon = Weapon::new(WeaponType::Zapper);
-    weapon.fire_rate = fire_rate;
-    weapon.shoot_timer = Timer::from_seconds(fire_rate, TimerMode::Once);
-    weapon.damage = weapon_damage;
-    weapon.piercing_pickups = piercing;
-    let mut inventory = WeaponInventory::new(weapon);
-    if let Some(buffs) = &saved_buffs {
-        for &wtype in &buffs.extra_weapons {
-            inventory.weapons.push(Weapon::new(wtype));
+    let inventory = if let Some(buffs) = &saved_buffs {
+        if buffs.weapons.is_empty() {
+            WeaponInventory::new(Weapon::new(WeaponType::Zapper))
+        } else {
+            let weapons_vec: Vec<Weapon> = buffs.weapons.iter().map(|sw| {
+                let mut w = Weapon::new(sw.weapon_type);
+                w.fire_rate = sw.fire_rate;
+                w.shoot_timer = Timer::from_seconds(sw.fire_rate, TimerMode::Once);
+                w.damage = sw.damage;
+                w.piercing_pickups = sw.piercing_pickups;
+                w
+            }).collect();
+            WeaponInventory { weapons: weapons_vec, equipped: 0 }
         }
-    }
+    } else {
+        WeaponInventory::new(Weapon::new(WeaponType::Zapper))
+    };
 
     commands.spawn((
         Sprite::from_atlas_image(
@@ -328,6 +334,7 @@ fn move_player(
     beam_res: Res<BeamRifleRes>,
     weapon_sounds: Res<WeaponSounds>,
     grid_query: Query<&crate::fluiddynamics::FluidGrid>,
+    bindings: Res<crate::settings::KeyBindings>,
 ) {
     let Ok(grid) = grid_query.single() else {
         return;
@@ -341,19 +348,19 @@ fn move_player(
     if input.just_pressed(KeyCode::KeyT) {
         next_state.set(GameState::EndCredits);
     }
-    if input.pressed(KeyCode::KeyA) {
+    if input.pressed(bindings.move_left) {
         dir.x -= 1.;
         facing.0 = FacingDirection::Left;
     }
-    if input.pressed(KeyCode::KeyD) {
+    if input.pressed(bindings.move_right) {
         dir.x += 1.;
         facing.0 = FacingDirection::Right;
     }
-    if input.pressed(KeyCode::KeyW) {
+    if input.pressed(bindings.move_up) {
         dir.y += 1.;
         facing.0 = FacingDirection::Up;
     }
-    if input.pressed(KeyCode::KeyS) {
+    if input.pressed(bindings.move_down) {
         dir.y -= 1.;
         facing.0 = FacingDirection::Down;
     }
@@ -373,7 +380,7 @@ fn move_player(
     }
 
 
-    if input.pressed(KeyCode::Space) && inventory.current().can_shoot() && !buttons.pressed(MouseButton::Left) {
+    if input.pressed(bindings.shoot) && inventory.current().can_shoot() && !buttons.pressed(MouseButton::Left) {
         let bullet_dir = match facing.0 {
             FacingDirection::Up => Vec2::new(0.0, 1.0),
             FacingDirection::UpRight => Vec2::new(1.0, 1.0),
@@ -603,6 +610,7 @@ fn update_player_sprite(
     player_res: Res<PlayerRes>,
     input: Res<ButtonInput<KeyCode>>,
     mut frame_timer: Local<f32>,
+    bindings: Res<crate::settings::KeyBindings>,
 ) {
     *frame_timer += time.delta_secs();
 
@@ -611,13 +619,13 @@ fn update_player_sprite(
 
     for mut sprite in &mut query {
         // Select the current sprite sheet based on input
-        let (image, layout_handle) = if input.pressed(KeyCode::KeyW) {
+        let (image, layout_handle) = if input.pressed(bindings.move_up) {
             &player_res.up
-        } else if input.pressed(KeyCode::KeyS) {
+        } else if input.pressed(bindings.move_down) {
             &player_res.down
-        } else if input.pressed(KeyCode::KeyA) {
+        } else if input.pressed(bindings.move_left) {
             &player_res.left
-        } else if input.pressed(KeyCode::KeyD) {
+        } else if input.pressed(bindings.move_right) {
             &player_res.right
         } else {
             continue;
@@ -873,8 +881,9 @@ fn thruster_dodge_system(
     mut q_player: Query<(Entity, &Transform, &mut Velocity, &mut ThrusterFuel), With<Player>>,
     q_window: Query<&Window, With<PrimaryWindow>>,
     q_camera: Query<(&Camera, &GlobalTransform)>,
+    bindings: Res<crate::settings::KeyBindings>,
 ) {
-    if !input.just_pressed(KeyCode::ShiftLeft) { return; }
+    if !input.just_pressed(bindings.dash) { return; }
 
     let Ok((player_entity, player_tf, mut velocity, mut fuel)) = q_player.single_mut() else { return; };
     if fuel.max <= 0.0 || fuel.current < 1.0 { return; }

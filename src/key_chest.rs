@@ -184,7 +184,7 @@ fn pickup_key(
     }
 }
 
-/// Press E near a chest while holding the key to open it.
+/// Press the interact key near a chest while holding the key to open it.
 fn interact_with_chest(
     mut commands: Commands,
     input: Res<ButtonInput<KeyCode>>,
@@ -192,8 +192,9 @@ fn interact_with_chest(
     player_q: Query<&Transform, With<Player>>,
     chest_q: Query<(Entity, &Transform), With<Chest>>,
     mut inventory_q: Query<&mut crate::weapons::WeaponInventory, With<Player>>,
+    bindings: Res<crate::settings::KeyBindings>,
 ) {
-    if !input.just_pressed(KeyCode::KeyE) { return; }
+    if !input.just_pressed(bindings.interact) { return; }
     if !key_state.has_key { return; }
 
     let Ok(player_tf) = player_q.single() else { return };

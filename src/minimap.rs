@@ -276,8 +276,9 @@ fn toggle_minimap(
     keys: Res<ButtonInput<KeyCode>>,
     mut visible: ResMut<MinimapVisible>,
     mut root_q: Query<&mut Visibility, With<MinimapRoot>>,
+    bindings: Res<crate::settings::KeyBindings>,
 ) {
-    if !keys.just_pressed(KeyCode::Tab) {
+    if !keys.just_pressed(bindings.toggle_minimap) {
         return;
     }
     visible.0 = !visible.0;

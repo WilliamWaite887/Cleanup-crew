@@ -127,24 +127,30 @@ pub struct PlanetLevelMarker;
 #[derive(Resource, Default)]
 pub struct PlanetCount(pub u32);
 
+/// Per-weapon state saved between stations.
+#[derive(Clone)]
+pub struct SavedWeapon {
+    pub weapon_type: weapons::WeaponType,
+    pub fire_rate: f32,
+    pub damage: f32,
+    pub piercing_pickups: u32,
+}
+
 /// Saved player buffs carried between stations on "Continue".
 #[derive(Resource, Clone)]
 pub struct SavedPlayerBuffs {
     pub max_health: f32,
     pub health: f32,
     pub move_speed: f32,
-    pub fire_rate: f32,
     pub num_cleared: usize,
     pub armor: f32,
     pub air_tank_max: f32,
     pub air_tank_drain_rate: f32,
-    pub weapon_damage: f32,
-    pub piercing_pickups: u32,
     pub regen_rate: f32,
     pub shield_max: f32,
     pub vacuum_mass: f32,
-    /// Extra weapons beyond the base Zapper (e.g. BeamRifle picked up from chest).
-    pub extra_weapons: Vec<weapons::WeaponType>,
+    /// All weapons in inventory with their accumulated stats.
+    pub weapons: Vec<SavedWeapon>,
 }
 
 #[derive(Component)]
@@ -170,7 +176,7 @@ enum GameState {
 }
 
 fn main() {
-    let (saved_volume, saved_mode) = settings::load_config();
+    let (saved_volume, saved_mode, saved_bindings) = settings::load_config();
 
     App::new()
         .add_plugins(
@@ -203,6 +209,7 @@ fn main() {
         .init_resource::<StationLevel>()
         .init_resource::<PlanetCount>()
         .insert_resource(saved_mode)
+        .insert_resource(saved_bindings)
         .add_plugins((
             procgen::ProcGen,
             map::MapPlugin,
@@ -361,8 +368,6 @@ fn check_return_to_airlock(
 
     let Ok((health, max_hp, move_spd, inventory, _num_cleared, armor, tank, regen, shield, pull, transform))
         = player_q.single() else { return; };
-    let weapon = inventory.current();
-
     let player_pos = transform.translation.truncate();
     let in_airlock = rooms.0.iter().any(|r| r.is_airlock && r.bounds_check(player_pos));
     if !in_airlock { return; }
@@ -372,21 +377,20 @@ fn check_return_to_airlock(
         max_health: max_hp.0,
         health: health.0,
         move_speed: move_spd.0,
-        fire_rate: weapon.fire_rate,
         // Reset cleared count so per-station scaling starts fresh.
         num_cleared: 0,
         armor: armor.0,
         air_tank_max: tank.max_capacity,
         air_tank_drain_rate: tank.drain_rate,
-        weapon_damage: weapon.damage,
-        piercing_pickups: weapon.piercing_pickups,
         regen_rate: regen.0,
         shield_max: shield.max,
         vacuum_mass: pull.mass,
-        extra_weapons: inventory.weapons.iter()
-            .filter(|w| w.weapon_type != weapons::WeaponType::Zapper)
-            .map(|w| w.weapon_type)
-            .collect(),
+        weapons: inventory.weapons.iter().map(|w| SavedWeapon {
+            weapon_type: w.weapon_type,
+            fire_rate: w.fire_rate,
+            damage: w.damage,
+            piercing_pickups: w.piercing_pickups,
+        }).collect(),
     });
     next_state.set(GameState::Win);
 }
@@ -875,8 +879,9 @@ fn toggle_game_music(
     asset_server: Res<AssetServer>,
     music_query: Query<Entity, With<GameMusic>>,
     volume: Res<GameMusicVolume>,
+    bindings: Res<settings::KeyBindings>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyM) {
+    if !keys.just_pressed(bindings.toggle_music) {
         return;
     }
 

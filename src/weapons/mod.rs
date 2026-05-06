@@ -183,8 +183,9 @@ fn update_weapon_hud(
 fn cycle_weapons(
     input: Res<ButtonInput<KeyCode>>,
     mut player_q: Query<&mut WeaponInventory, With<crate::player::Player>>,
+    bindings: Res<crate::settings::KeyBindings>,
 ) {
-    if !input.just_pressed(KeyCode::KeyQ) { return; }
+    if !input.just_pressed(bindings.swap_weapon) { return; }
     let Ok(mut inv) = player_q.single_mut() else { return; };
     inv.cycle_next();
 }
