@@ -21,6 +21,12 @@ pub struct FinalBoss;
 #[derive(Component)]
 struct PlanetWinScreen;
 
+#[derive(Component)]
+struct BossHealthBarRoot;
+
+#[derive(Component)]
+struct BossHealthBarFill;
+
 // ── Plugin ───────────────────────────────────────────────────────────────────
 
 pub struct PlanetPlugin;
@@ -42,16 +48,23 @@ impl Plugin for PlanetPlugin {
                     .run_if(|sl: Res<StationLevel>, m: Option<Res<PlanetLevelMarker>>|
                         sl.0 % 3 == 2 && m.is_none()),
             )
-            // On planet Playing: green surface tint + spawn boss
+            // On planet Playing: green surface tint + spawn boss + health bar
             .add_systems(
                 OnEnter(GameState::Playing),
-                (tint_planet_background, spawn_final_boss)
+                (tint_planet_background, spawn_final_boss, spawn_boss_health_bar)
                     .run_if(resource_exists::<PlanetLevelMarker>),
             )
             // Detect boss death → trigger PlanetWin
             .add_systems(
                 Update,
                 check_planet_win
+                    .run_if(in_state(GameState::Playing))
+                    .run_if(resource_exists::<PlanetLevelMarker>),
+            )
+            // Update boss health bar fill width each frame
+            .add_systems(
+                Update,
+                update_boss_health_bar
                     .run_if(in_state(GameState::Playing))
                     .run_if(resource_exists::<PlanetLevelMarker>),
             )
@@ -151,9 +164,13 @@ fn tint_planet_background(mut clear_color: ResMut<ClearColor>) {
 fn restore_background(
     mut commands: Commands,
     mut clear_color: ResMut<ClearColor>,
+    bar_q: Query<Entity, With<BossHealthBarRoot>>,
 ) {
     clear_color.0 = Color::srgb(0.02, 0.02, 0.06);
     commands.remove_resource::<PlanetLevelMarker>();
+    for e in &bar_q {
+        commands.entity(e).despawn();
+    }
 }
 
 // ── Boss spawn ────────────────────────────────────────────────────────────────
@@ -190,6 +207,75 @@ fn spawn_final_boss(
         FinalBoss,
         GameEntity,
     ));
+}
+
+// ── Boss health bar ───────────────────────────────────────────────────────────
+
+fn spawn_boss_health_bar(mut commands: Commands, asset_server: Res<AssetServer>) {
+    let font: Handle<Font> = asset_server.load(FONT_PATH);
+
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(16.0),
+                left: Val::Percent(10.0),
+                width: Val::Percent(80.0),
+                height: Val::Px(40.0),
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(12.0),
+                padding: UiRect::horizontal(Val::Px(12.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.75)),
+            BorderRadius::all(Val::Px(6.0)),
+            ZIndex(50),
+            BossHealthBarRoot,
+        ))
+        .with_children(|root| {
+            root.spawn((
+                Text::new("BOSS"),
+                TextFont { font, font_size: 18.0, ..default() },
+                TextColor(Color::srgb(1.0, 0.3, 0.3)),
+                Node { width: Val::Px(52.0), ..default() },
+            ));
+
+            // Track background
+            root.spawn((
+                Node {
+                    flex_grow: 1.0,
+                    height: Val::Px(24.0),
+                    overflow: Overflow::clip(),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.25, 0.04, 0.04, 1.0)),
+                BorderRadius::all(Val::Px(4.0)),
+            ))
+            .with_children(|bg| {
+                bg.spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.85, 0.12, 0.12)),
+                    BorderRadius::all(Val::Px(4.0)),
+                    BossHealthBarFill,
+                ));
+            });
+        });
+}
+
+fn update_boss_health_bar(
+    boss_q: Query<(&crate::enemies::Health, &crate::enemies::MaxHealth), With<FinalBoss>>,
+    mut fill_q: Query<&mut Node, With<BossHealthBarFill>>,
+) {
+    let Ok(mut fill_node) = fill_q.single_mut() else { return };
+    let pct = boss_q
+        .single()
+        .map(|(hp, max)| (hp.0 / max.0).clamp(0.0, 1.0) * 100.0)
+        .unwrap_or(0.0);
+    fill_node.width = Val::Percent(pct);
 }
 
 // ── Win detection ─────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy::app::AppExit;
 
-use crate::{GameState, GameMusicVolume, MusicTrack, ShowAirLabels};
+use crate::{GameState, GameMusicVolume, MusicTrack, PlanetLevelMarker, ShowAirLabels};
 use crate::map::LevelToLoad;
 use crate::settings;
 
@@ -25,6 +25,7 @@ struct MenuUI;
 enum MenuButton {
     Play,
     PlayTestRoom,
+    PlayPlanet,
     Credits,
     Settings,
     ToggleAirLabels,
@@ -157,6 +158,29 @@ fn setup_menu(
                     .with_children(|b| {
                         b.spawn((
                             Text::new("Test Room"),
+                            TextFont { font_size: 28.0, ..default() },
+                        ));
+                    });
+
+                    // Planet Test Button
+                    col.spawn((
+                        Button,
+                        MenuButton::PlayPlanet,
+                        Node {
+                            width: Val::Px(420.0),
+                            height: Val::Px(60.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            padding: UiRect::all(Val::Px(8.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.05, 0.2, 0.05, 0.8)),
+                        BorderColor(Color::srgba(0.3, 1.0, 0.3, 0.5)),
+                        BorderRadius::all(Val::Px(6.0)),
+                    ))
+                    .with_children(|b| {
+                        b.spawn((
+                            Text::new("Test Planet"),
                             TextFont { font_size: 28.0, ..default() },
                         ));
                     });
@@ -311,6 +335,10 @@ fn handle_buttons(
             }
             MenuButton::PlayTestRoom => {
                 level_to_load.0 = "assets/rooms/window_room.txt".to_string();
+                next_state.set(GameState::Loading);
+            }
+            MenuButton::PlayPlanet => {
+                commands.insert_resource(PlanetLevelMarker);
                 next_state.set(GameState::Loading);
             }
             MenuButton::Credits => {
