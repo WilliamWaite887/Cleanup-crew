@@ -164,7 +164,7 @@ pub fn bullet_collision(
         (With<Bullet>, Without<MarkedForDespawn>),
     >,
     mut enemy_query: Query<
-        (Entity, &Transform, &mut crate::enemies::Health),
+        (Entity, &Transform, &mut crate::enemies::Health, Option<&crate::collidable::Collider>),
         (With<crate::enemies::Enemy>, Without<crate::enemies::Reaper>),
     >,
     mut player_query: Query<
@@ -197,12 +197,14 @@ pub fn bullet_collision(
         // Bullet hits enemy
         if matches!(owner, BulletOwner::Player) {
             if let Some(ref mut hit_enemies) = hit_enemies_opt {
-            for (enemy_entity, enemy_tf, mut health) in &mut enemy_query {
+            for (enemy_entity, enemy_tf, mut health, collider_opt) in &mut enemy_query {
                 if hit_enemies.0.contains(&enemy_entity) {
                     continue;
                 }
                 let enemy_pos = enemy_tf.translation;
-                let enemy_half = Vec2::splat(crate::enemies::ENEMY_SIZE * 0.5);
+                let enemy_half = collider_opt
+                    .map(|c| c.half_extents)
+                    .unwrap_or_else(|| Vec2::splat(crate::enemies::ENEMY_SIZE * 0.5));
                 if aabb_overlap(
                     bullet_pos.x,
                     bullet_pos.y,
