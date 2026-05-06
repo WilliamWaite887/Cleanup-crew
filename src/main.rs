@@ -158,6 +158,8 @@ enum GameState {
 }
 
 fn main() {
+    let (saved_volume, saved_mode) = settings::load_config();
+
     App::new()
         .add_plugins(
             DefaultPlugins
@@ -178,7 +180,7 @@ fn main() {
         //Calls the plugin
         .init_resource::<ShowAirLabels>()
         .init_resource::<StationLevel>()
-        .init_resource::<settings::GameWindowMode>()
+        .insert_resource(saved_mode)
         .add_plugins((
             procgen::ProcGen,
             map::MapPlugin,
@@ -267,7 +269,7 @@ fn main() {
         )
         
         .insert_resource(DamageCooldown(Timer::from_seconds(0.5, TimerMode::Once)))
-        .insert_resource(GameMusicVolume(0.5)) // .5 volume by default
+        .insert_resource(GameMusicVolume(saved_volume))
         .run();
 }
 

@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy::audio::Volume;
 use bevy::window::{WindowMode, PrimaryWindow, MonitorSelection, VideoModeSelection};
 use crate::{GameMusicVolume, MusicTrack, FONT_PATH};
+use std::path::PathBuf;
 
 pub struct SettingsPlugin;
 
@@ -52,6 +53,58 @@ impl GameWindowMode {
             Self::BorderlessFullscreen => WindowMode::BorderlessFullscreen(MonitorSelection::Current),
             Self::Fullscreen => WindowMode::Fullscreen(MonitorSelection::Current, VideoModeSelection::Current),
         }
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Config {
+    volume: f32,
+    window_mode_index: u8,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self { volume: 0.5, window_mode_index: 1 }
+    }
+}
+
+fn config_path() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("cleanup_crew")
+        .join("config.ron")
+}
+
+pub fn load_config() -> (f32, GameWindowMode) {
+    let path = config_path();
+    let cfg: Config = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| ron::from_str(&s).ok())
+        .unwrap_or_default();
+
+    let mode = match cfg.window_mode_index {
+        0 => GameWindowMode::Windowed,
+        2 => GameWindowMode::Fullscreen,
+        _ => GameWindowMode::BorderlessFullscreen,
+    };
+    (cfg.volume, mode)
+}
+
+fn save_config(volume: f32, mode: GameWindowMode) {
+    let cfg = Config {
+        volume,
+        window_mode_index: match mode {
+            GameWindowMode::Windowed => 0,
+            GameWindowMode::BorderlessFullscreen => 1,
+            GameWindowMode::Fullscreen => 2,
+        },
+    };
+    if let Ok(s) = ron::to_string(&cfg) {
+        let path = config_path();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(path, s);
     }
 }
 
@@ -301,6 +354,7 @@ fn handle_settings_buttons(
                 *window_mode = window_mode.next();
             }
             SettingsButton::Back => {
+                save_config(volume.0, *window_mode);
                 commands.remove_resource::<SettingsOrigin>();
                 for e in &ui_q {
                     commands.entity(e).despawn();
