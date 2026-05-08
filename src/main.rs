@@ -30,6 +30,7 @@ pub mod minimap;
 pub mod pause;
 pub mod settings;
 pub mod key_chest;
+pub mod station_code;
 
 pub const FONT_PATH: &str = "fonts/BitcountSingleInk-VariableFont_CRSV,ELSH,ELXP,SZP1,SZP2,XPN1,XPN2,YPN1,YPN2,slnt,wght.ttf";
 
@@ -154,6 +155,8 @@ pub struct SavedPlayerBuffs {
     pub atk_speed_stacks: u32,
     pub damage_stacks: u32,
     pub piercing_stacks: u32,
+    /// Code digits collected from the 3 stations in the current cycle (index = station-in-cycle).
+    pub station_codes: [Option<u8>; 3],
 }
 
 #[derive(Component)]
@@ -236,6 +239,7 @@ fn main() {
             pause::PausePlugin,
             settings::SettingsPlugin,
             key_chest::KeyChestPlugin,
+            station_code::StationCodePlugin,
             planet::PlanetPlugin,
         ))
         .add_systems(Startup, (setup_camera, rewards::load_reward_font))
@@ -366,6 +370,7 @@ fn check_return_to_airlock(
         &Transform, &player::WeaponBuffStacks,
     ), With<Player>>,
     level_complete: Option<Res<LevelComplete>>,
+    codes: Option<Res<station_code::StationCodes>>,
 ) {
     if level_complete.is_none() { return; }
 
@@ -397,6 +402,7 @@ fn check_return_to_airlock(
         atk_speed_stacks: buff_stacks.atk_speed,
         damage_stacks:     buff_stacks.damage,
         piercing_stacks:   buff_stacks.piercing,
+        station_codes: codes.map(|c| c.codes).unwrap_or([None; 3]),
     });
     next_state.set(GameState::Win);
 }
@@ -923,14 +929,23 @@ fn handle_end_screen_buttons(
     mut interactions: Query<(&Interaction, &EndScreenButtons), (Changed<Interaction>, With<Button>)>,
     mut next_state: ResMut<NextState<GameState>>,
     mut station_level: ResMut<StationLevel>,
+    current_state: Res<State<GameState>>,
+    mut saved_buffs: Option<ResMut<SavedPlayerBuffs>>,
 ) {
     for (interaction, which) in &mut interactions {
-        
+
         if *interaction != Interaction::Pressed {
             continue;
         }
         match which {
             EndScreenButtons::Continue => {
+                // After a planet clear, reset collected codes for the next 3-station cycle.
+                if *current_state.get() == GameState::PlanetWin {
+                    if let Some(ref mut buffs) = saved_buffs {
+                        buffs.station_codes = [None; 3];
+                    }
+                    commands.insert_resource(station_code::StationCodes::default());
+                }
                 // Increment station level — buffs are already saved in SavedPlayerBuffs.
                 station_level.0 += 1;
                 info!("Continuing to station {} (difficulty increased)", station_level.0 + 1);

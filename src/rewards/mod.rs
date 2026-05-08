@@ -22,7 +22,7 @@ use crate::weapons::WeaponInventory;
 
 #[derive(Component)]
 pub struct RewardPopup {
-    timer: Timer,
+    pub timer: Timer,
 }
 
 pub fn tick_reward_popups(
