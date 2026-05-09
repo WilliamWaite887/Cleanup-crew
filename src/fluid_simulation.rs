@@ -66,6 +66,7 @@ impl Plugin for FluidSimPlugin {
                 )
                     .chain()
                     .run_if(in_state(crate::GameState::Playing))
+                    .run_if(not(resource_exists::<crate::PlanetLevelMarker>))
             )
             .add_systems(
                 bevy::prelude::OnExit(crate::GameState::Playing),

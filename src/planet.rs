@@ -4,7 +4,6 @@ use crate::enemies::{
     ActiveEnemy, AnimationTimer, Enemy, EnemyFrames, EnemyMoveSpeed, EnemyRes,
     HitAnimation, MeleeEnemy, Velocity, ENEMY_SPEED,
 };
-use crate::fluiddynamics::PulledByFluid;
 use crate::map::GeneratedLevel;
 use crate::procgen::ProcgenSet;
 use crate::room::{Room, RoomVec};
@@ -268,7 +267,6 @@ fn spawn_final_boss(
         crate::enemies::Health(hp),
         crate::enemies::MaxHealth(hp),
         EnemyMoveSpeed(ENEMY_SPEED * 0.6),
-        PulledByFluid { mass: 200.0 },
     )).insert((
         Collidable,
         Collider { half_extents: Vec2::splat(TILE_SIZE * 1.5) },

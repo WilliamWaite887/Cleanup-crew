@@ -247,11 +247,15 @@ fn main() {
         .add_systems(OnEnter(GameState::Loading), log_state_change)
         .add_systems(OnEnter(GameState::EndCredits), log_state_change)
         .add_systems(OnEnter(GameState::Playing), log_state_change)
-        .add_systems(OnEnter(GameState::Playing), init_air_grid)
+        .add_systems(
+            OnEnter(GameState::Playing),
+            init_air_grid.run_if(not(resource_exists::<PlanetLevelMarker>)),
+        )
         .add_systems(
             OnEnter(GameState::Playing),
             spawn_pressure_labels
                 .after(init_air_grid)
+                .run_if(not(resource_exists::<PlanetLevelMarker>))
                 .run_if(|flag: Res<ShowAirLabels>| flag.0),
         )
         .add_systems(OnEnter(GameState::Playing), start_game_music)
