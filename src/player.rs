@@ -609,9 +609,11 @@ fn enemy_hits_player(
                     
                
                     if enemy_health.0 > 0.0 {
-                        commands.entity(enemy_entity).insert(HitAnimation {
-                            timer: Timer::from_seconds(0.3, TimerMode::Once),
-                        });
+                        if let Ok(mut ec) = commands.get_entity(enemy_entity) {
+                            ec.insert(HitAnimation {
+                                timer: Timer::from_seconds(0.3, TimerMode::Once),
+                            });
+                        }
                     }
                 }
             }

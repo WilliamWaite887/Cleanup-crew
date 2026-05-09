@@ -87,7 +87,7 @@ pub fn init_station_codes(
 fn spawn_code_fragment(
     mut commands: Commands,
     res: Res<CodeFragmentRes>,
-    mut codes: ResMut<StationCodes>,
+    codes: Res<StationCodes>,
     station_level: Res<StationLevel>,
     rooms: Res<RoomVec>,
     planet: Option<Res<PlanetLevelMarker>>,
@@ -100,7 +100,7 @@ fn spawn_code_fragment(
     if codes.codes[station_index].is_some() { return; }
 
     let digit = random_range(0u8..=9u8);
-    codes.codes[station_index] = Some(digit);
+    // Digit is stored in the CodeFragment component; the resource is updated on pickup.
 
     // Pick a non-airlock room in the middle of the list for the spawn position.
     let non_airlock: Vec<&crate::room::Room> =
@@ -134,6 +134,7 @@ fn collect_code_fragment(
     mut commands: Commands,
     player_q: Query<&Transform, With<Player>>,
     fragment_q: Query<(Entity, &Transform, &CodeFragment)>,
+    mut codes: ResMut<StationCodes>,
     asset_server: Res<AssetServer>,
 ) {
     let Ok(player_tf) = player_q.single() else { return };
@@ -143,6 +144,7 @@ fn collect_code_fragment(
     for (entity, frag_tf, frag) in &fragment_q {
         let fp = frag_tf.translation;
         if aabb_overlap(pp.x, pp.y, half, fp.x, fp.y, half) {
+            codes.codes[frag.station_index] = Some(frag.digit);
             commands.entity(entity).despawn();
 
             // Floating confirmation text.
