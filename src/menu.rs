@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy::app::AppExit;
 
-use crate::{GameState, GameMusicVolume, MusicTrack};
+use crate::{GameState, GameMusicVolume, MusicTrack, PlanetLevelMarker};
 use crate::settings;
 
 pub struct MenuPlugin;
@@ -23,6 +23,7 @@ struct MenuUI;
 #[derive(Component)]
 enum MenuButton {
     Play,
+    PlayPlanet,
     Credits,
     Settings,
     Quit,
@@ -99,6 +100,29 @@ fn setup_menu(
                         MenuButton::Play,
                         ImageNode::new(assets.load("menu/Title_Play.png")),
                     ));
+
+                    // Planet Test Button
+                    col.spawn((
+                        Button,
+                        MenuButton::PlayPlanet,
+                        Node {
+                            width: Val::Px(420.0),
+                            height: Val::Px(60.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            padding: UiRect::all(Val::Px(8.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.05, 0.2, 0.05, 0.8)),
+                        BorderColor(Color::srgba(0.3, 1.0, 0.3, 0.5)),
+                        BorderRadius::all(Val::Px(6.0)),
+                    ))
+                    .with_children(|b| {
+                        b.spawn((
+                            Text::new("Test Planet"),
+                            TextFont { font_size: 28.0, ..default() },
+                        ));
+                    });
 
                     // Credits
                     col.spawn((
@@ -232,6 +256,10 @@ fn handle_buttons(
 
         match which {
             MenuButton::Play => {
+                next_state.set(GameState::Loading);
+            }
+            MenuButton::PlayPlanet => {
+                commands.insert_resource(PlanetLevelMarker);
                 next_state.set(GameState::Loading);
             }
             MenuButton::Credits => {
