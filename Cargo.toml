@@ -1,12 +1,15 @@
 [package]
-name = "my_project"
+name = "CleanupCrew"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = "0.16.1"
+bevy = { version = "0.16.1", features = ["serialize"] }
 noise = "0.9.0"
 rand = "0.9.2"
+serde = { version = "1", features = ["derive"] }
+ron = "0.8"
+dirs = "5"
 
 [profile.release]
 opt-level = 3

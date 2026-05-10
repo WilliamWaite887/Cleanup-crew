@@ -203,7 +203,7 @@ impl RoomRes {
             4 => &self.room4,
             5 => &self.room5,
             6 => &self.room6,
-            _ => panic!("Room doesn't exist"),
+            _ => { warn!("room({}) out of range, falling back to room1", n); &self.room1 }
         }
     }
 
@@ -216,7 +216,7 @@ impl RoomRes {
             4 => &mut self.room4,
             5 => &mut self.room5,
             6 => &mut self.room6,
-            _ => panic!("Room doesn't exist"),
+            _ => { warn!("room_mut({}) out of range, falling back to room1", n); &mut self.room1 }
         }
     }
 }
@@ -232,11 +232,13 @@ impl Plugin for ProcGen {
                 load_rooms.in_set(ProcgenSet::LoadRooms),
             )
             // label the BSP/full-level build and order it after load-rooms
+            // Skip when the planet plugin has already injected the level.
             .add_systems(
                 OnEnter(GameState::Loading),
                 build_full_level
                     .in_set(ProcgenSet::BuildFullLevel)
-                    .after(ProcgenSet::LoadRooms),
+                    .after(ProcgenSet::LoadRooms)
+                    .run_if(not(resource_exists::<crate::PlanetLevelMarker>)),
             );
             app.insert_resource(WindowConfig {
                 density: 0.6,

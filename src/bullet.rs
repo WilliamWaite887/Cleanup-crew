@@ -2,7 +2,7 @@ use crate::Player;
 
 use crate::player::{Health, MaxHealth, MoveSpeed, Shield};
 use crate::room::{LevelState, RoomVec};
-use crate::weapons::{BulletDamage, BulletRes, BeamRifleRes, WeaponInventory, WeaponSounds, fire_weapon};
+use crate::weapons::{BulletDamage, BulletRes, BeamRifleRes, WeaponInventory, WeaponSounds, SfxCooldown, fire_weapon};
 use crate::window;
 use crate::{GameState, TILE_SIZE};
 use crate::table;
@@ -77,6 +77,7 @@ pub fn shoot_bullet_on_click(
     bullet_res: Res<BulletRes>,
     beam_res: Res<BeamRifleRes>,
     weapon_sounds: Res<WeaponSounds>,
+    mut sfx_cooldown: ResMut<SfxCooldown>,
 ) {
     let Ok((player_transform, mut inventory)) = q_player.single_mut() else {
         return;
@@ -116,6 +117,7 @@ pub fn shoot_bullet_on_click(
             &bullet_res,
             &beam_res,
             &weapon_sounds,
+            &mut sfx_cooldown,
             spawn_pos,
             dir_vec,
         );
@@ -162,7 +164,7 @@ pub fn bullet_collision(
         (With<Bullet>, Without<MarkedForDespawn>),
     >,
     mut enemy_query: Query<
-        (Entity, &Transform, &mut crate::enemies::Health),
+        (Entity, &Transform, &mut crate::enemies::Health, Option<&crate::collidable::Collider>),
         (With<crate::enemies::Enemy>, Without<crate::enemies::Reaper>),
     >,
     mut player_query: Query<
@@ -195,12 +197,14 @@ pub fn bullet_collision(
         // Bullet hits enemy
         if matches!(owner, BulletOwner::Player) {
             if let Some(ref mut hit_enemies) = hit_enemies_opt {
-            for (enemy_entity, enemy_tf, mut health) in &mut enemy_query {
+            for (enemy_entity, enemy_tf, mut health, collider_opt) in &mut enemy_query {
                 if hit_enemies.0.contains(&enemy_entity) {
                     continue;
                 }
                 let enemy_pos = enemy_tf.translation;
-                let enemy_half = Vec2::splat(crate::enemies::ENEMY_SIZE * 0.5);
+                let enemy_half = collider_opt
+                    .map(|c| c.half_extents)
+                    .unwrap_or_else(|| Vec2::splat(crate::enemies::ENEMY_SIZE * 0.5));
                 if aabb_overlap(
                     bullet_pos.x,
                     bullet_pos.y,

@@ -5,7 +5,8 @@ pub const NAME: &str = "Attack Speed Up";
 pub const ASSET: &str = "rewards/AtkSpdBox.png";
 
 pub fn apply(weapon: &mut Weapon) {
-    let new_rate = (weapon.fire_rate - 0.03).max(0.1);
-    weapon.fire_rate = new_rate;
-    weapon.shoot_timer.set_duration(Duration::from_secs_f32(new_rate));
+    let current = weapon.shoot_timer.duration().as_secs_f32();
+    let new_duration = (current - 0.03).max(0.05);
+    weapon.fire_rate = new_duration;
+    weapon.shoot_timer.set_duration(Duration::from_secs_f32(new_duration));
 }

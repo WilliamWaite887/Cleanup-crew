@@ -42,8 +42,25 @@ fn handle_escape(
     pause_ui_q: Query<Entity, With<PauseUI>>,
     settings_ui_q: Query<Entity, With<settings::SettingsUI>>,
     settings_open: Option<Res<settings::SettingsOrigin>>,
+    controls_ui_q: Query<Entity, With<settings::ControlsUI>>,
+    mut binding_state: ResMut<settings::BindingState>,
+    bindings: Res<settings::KeyBindings>,
 ) {
-    if !keys.just_pressed(KeyCode::Escape) {
+    if !keys.just_pressed(bindings.pause) {
+        return;
+    }
+
+    // Cancel any active rebind without applying it.
+    if binding_state.listening_for.is_some() {
+        binding_state.listening_for = None;
+        return;
+    }
+
+    // Close the controls panel if it's open.
+    if !controls_ui_q.is_empty() {
+        for e in &controls_ui_q {
+            commands.entity(e).despawn();
+        }
         return;
     }
 
@@ -182,20 +199,26 @@ fn handle_pause_buttons(
     }
 }
 
-/// Clean up all pause/settings state if we leave Playing by any means.
+/// Clean up all pause/settings/controls state if we leave Playing by any means.
 fn cleanup_on_exit(
     mut commands: Commands,
     pause_ui_q: Query<Entity, With<PauseUI>>,
     settings_ui_q: Query<Entity, With<settings::SettingsUI>>,
+    controls_ui_q: Query<Entity, With<settings::ControlsUI>>,
+    mut binding_state: ResMut<settings::BindingState>,
     mut virtual_time: ResMut<Time<Virtual>>,
 ) {
     virtual_time.unpause();
     commands.remove_resource::<IsPaused>();
     commands.remove_resource::<settings::SettingsOrigin>();
+    binding_state.listening_for = None;
     for e in &pause_ui_q {
         commands.entity(e).despawn();
     }
     for e in &settings_ui_q {
+        commands.entity(e).despawn();
+    }
+    for e in &controls_ui_q {
         commands.entity(e).despawn();
     }
 }

@@ -14,7 +14,7 @@ use bevy::prelude::*;
 use rand::random_range;
 use crate::{TILE_SIZE, GameEntity};
 use crate::Player;
-use crate::player::{Health, MaxHealth, MoveSpeed, Armor, AirTank, Regen, Shield, ThrusterFuel, aabb_overlap};
+use crate::player::{Health, MaxHealth, MoveSpeed, Armor, AirTank, Regen, Shield, ThrusterFuel, WeaponBuffStacks, aabb_overlap};
 use crate::fluiddynamics::PulledByFluid;
 use crate::weapons::WeaponInventory;
 
@@ -22,7 +22,7 @@ use crate::weapons::WeaponInventory;
 
 #[derive(Component)]
 pub struct RewardPopup {
-    timer: Timer,
+    pub timer: Timer,
 }
 
 pub fn tick_reward_popups(
@@ -118,7 +118,7 @@ pub fn spawn_reward(commands: &mut Commands, pos: Vec3, box_sprite: &RewardRes) 
         9  => box_sprite.piercing.clone(),
         10 => box_sprite.damage_up.clone(),
         11 => box_sprite.shield_burst.clone(),
-        _  => panic!("reward image out of range"),
+        _  => { warn!("spawn_reward: type {} out of range, defaulting to max_hp", reward_type); box_sprite.max_hp.clone() }
     };
 
     commands.spawn((
@@ -141,6 +141,7 @@ pub fn player_pickup_reward(
         Entity, &Transform,
         &mut Health, &mut MaxHealth, &mut MoveSpeed, &mut Armor, &mut AirTank,
         &mut Regen, &mut Shield, &mut PulledByFluid, &mut ThrusterFuel,
+        &mut WeaponBuffStacks,
     ), With<Player>>,
     reward_query: Query<(Entity, &Transform, &Reward)>,
     mut player_weapon_q: Query<&mut WeaponInventory, With<Player>>,
@@ -149,7 +150,7 @@ pub fn player_pickup_reward(
     let Ok((
         _player_entity, player_tf,
         mut hp, mut maxhp, mut movspd, mut arm, mut tank,
-        mut reg, mut shld, mut pull, mut fuel,
+        mut reg, mut shld, mut pull, mut fuel, mut stacks,
     )) = player_query.single_mut() else {
         return;
     };
@@ -164,20 +165,19 @@ pub fn player_pickup_reward(
         }
 
         if let Ok(mut inv) = player_weapon_q.single_mut() {
-            let weapon = inv.current_mut();
             match reward_type.0 {
                 1  => max_hp::apply(&mut hp, &mut maxhp),
-                2  => atk_speed::apply(weapon),
+                2  => { stacks.atk_speed += 1; for w in &mut inv.weapons { atk_speed::apply(w); } }
                 3  => move_speed::apply(&mut movspd, &mut fuel),
                 4  => armor::apply(&mut arm),
                 5  => air_tank::apply(&mut tank),
                 6  => drain_rate::apply(&mut tank),
                 7  => vacuum_res::apply(&mut pull),
                 8  => regen::apply(&mut reg),
-                9  => piercing::apply(weapon),
-                10 => damage_up::apply(weapon),
+                9  => { stacks.piercing += 1; for w in &mut inv.weapons { piercing::apply(w); } }
+                10 => { stacks.damage += 1; for w in &mut inv.weapons { damage_up::apply(w); } }
                 11 => shield::apply(&mut shld),
-                _  => panic!("Reward Type Not Found"),
+                _  => { warn!("player_pickup_reward: unknown type {}, defaulting to max_hp", reward_type.0); max_hp::apply(&mut hp, &mut maxhp) }
             }
         }
 

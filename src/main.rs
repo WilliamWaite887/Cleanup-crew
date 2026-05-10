@@ -1,12 +1,14 @@
 use crate::collidable::{Collidable, Collider};
-use crate::player::{Health, Player};
+use crate::player::{Health, Player, ThrusterFuel};
 use bevy::{prelude::*, window::{PresentMode, WindowMode}};
+use bevy::render::{RenderPlugin, settings::{RenderCreation, WgpuSettings, Backends}};
 use bevy::audio::Volume;
 use crate::air::{init_air_grid, spawn_pressure_labels, update_pressure_labels, update_air_on_window_break};
 use crate::room::RoomVec;
 
 pub mod collidable;
 pub mod endcredits;
+pub mod planet;
 pub mod enemies;
 pub mod player;
 pub mod table;
@@ -28,6 +30,7 @@ pub mod minimap;
 pub mod pause;
 pub mod settings;
 pub mod key_chest;
+pub mod station_code;
 
 pub const FONT_PATH: &str = "fonts/BitcountSingleInk-VariableFont_CRSV,ELSH,ELXP,SZP1,SZP2,XPN1,XPN2,YPN1,YPN2,slnt,wght.ttf";
 
@@ -61,6 +64,10 @@ struct ShieldBarFill;
 struct ShieldBarRow;
 
 
+/// One thruster-fuel dot in the HUD. Index indicates which charge slot it represents (0-based).
+#[derive(Component)]
+struct ThrusterDot(usize);
+
 /// Marker added to every music audio entity so the volume sync system can find them.
 #[derive(Component)]
 pub struct MusicTrack;
@@ -89,6 +96,7 @@ pub enum EndScreenButtons{
     MainMenu,
     Continue,
     Leave,
+    EnterPlanet,
 }
 
 #[derive(Component)]
@@ -112,24 +120,43 @@ impl Default for StationLevel {
     fn default() -> Self { Self(0) }
 }
 
+/// Inserted before entering GameState::Loading when the next level is the planet.
+#[derive(Resource)]
+pub struct PlanetLevelMarker;
+
+/// How many planet levels have been cleared this run.
+#[derive(Resource, Default)]
+pub struct PlanetCount(pub u32);
+
+/// Per-weapon state saved between stations.
+#[derive(Clone)]
+pub struct SavedWeapon {
+    pub weapon_type: weapons::WeaponType,
+    pub fire_rate: f32,
+    pub damage: f32,
+    pub piercing_pickups: u32,
+}
+
 /// Saved player buffs carried between stations on "Continue".
 #[derive(Resource, Clone)]
 pub struct SavedPlayerBuffs {
     pub max_health: f32,
     pub health: f32,
     pub move_speed: f32,
-    pub fire_rate: f32,
     pub num_cleared: usize,
     pub armor: f32,
     pub air_tank_max: f32,
     pub air_tank_drain_rate: f32,
-    pub weapon_damage: f32,
-    pub piercing_pickups: u32,
     pub regen_rate: f32,
     pub shield_max: f32,
     pub vacuum_mass: f32,
-    /// Extra weapons beyond the base Zapper (e.g. BeamRifle picked up from chest).
-    pub extra_weapons: Vec<weapons::WeaponType>,
+    /// All weapons in inventory with their accumulated stats.
+    pub weapons: Vec<SavedWeapon>,
+    pub atk_speed_stacks: u32,
+    pub damage_stacks: u32,
+    pub piercing_stacks: u32,
+    /// Code digits collected from the 3 stations in the current cycle (index = station-in-cycle).
+    pub station_codes: [Option<u8>; 3],
 }
 
 #[derive(Component)]
@@ -151,9 +178,12 @@ enum GameState {
     GameOver,
     EndCredits,
     Win,
+    PlanetWin,
 }
 
 fn main() {
+    let (saved_volume, saved_mode, saved_bindings) = settings::load_config();
+
     App::new()
         .add_plugins(
             DefaultPlugins
@@ -166,6 +196,15 @@ fn main() {
                         ..default()
                     }),
                     ..default()
+                })
+                // Prefer DX12 over Vulkan on Windows — avoids "Parent device is lost"
+                // GPU crashes that occur when loading heavy scenes via the Vulkan backend.
+                .set(RenderPlugin {
+                    render_creation: RenderCreation::Automatic(WgpuSettings {
+                        backends: Some(Backends::DX12),
+                        ..default()
+                    }),
+                    ..default()
                 }),
         )
         .insert_resource(bevy::render::camera::ClearColor(Color::srgb(0.02, 0.02, 0.06)))
@@ -174,7 +213,9 @@ fn main() {
         //Calls the plugin
         .init_resource::<ShowAirLabels>()
         .init_resource::<StationLevel>()
-        .init_resource::<settings::GameWindowMode>()
+        .init_resource::<PlanetCount>()
+        .insert_resource(saved_mode)
+        .insert_resource(saved_bindings)
         .add_plugins((
             procgen::ProcGen,
             map::MapPlugin,
@@ -198,17 +239,23 @@ fn main() {
             pause::PausePlugin,
             settings::SettingsPlugin,
             key_chest::KeyChestPlugin,
+            station_code::StationCodePlugin,
+            planet::PlanetPlugin,
         ))
         .add_systems(Startup, (setup_camera, rewards::load_reward_font))
         .add_systems(OnEnter(GameState::Menu), log_state_change)
         .add_systems(OnEnter(GameState::Loading), log_state_change)
         .add_systems(OnEnter(GameState::EndCredits), log_state_change)
         .add_systems(OnEnter(GameState::Playing), log_state_change)
-        .add_systems(OnEnter(GameState::Playing), init_air_grid)
+        .add_systems(
+            OnEnter(GameState::Playing),
+            init_air_grid.run_if(not(resource_exists::<PlanetLevelMarker>)),
+        )
         .add_systems(
             OnEnter(GameState::Playing),
             spawn_pressure_labels
                 .after(init_air_grid)
+                .run_if(not(resource_exists::<PlanetLevelMarker>))
                 .run_if(|flag: Res<ShowAirLabels>| flag.0),
         )
         .add_systems(OnEnter(GameState::Playing), start_game_music)
@@ -222,6 +269,7 @@ fn main() {
         .add_systems(OnExit(GameState::Playing), remove_level_complete)
         .add_systems(Update, handle_end_screen_buttons.run_if(in_state(GameState::GameOver)))
         .add_systems(Update, handle_end_screen_buttons.run_if(in_state(GameState::Win)))
+        .add_systems(Update, handle_end_screen_buttons.run_if(in_state(GameState::PlanetWin)))
         .add_systems(OnExit(GameState::GameOver), clean_end_screen)
         .add_systems(OnExit(GameState::Win), clean_end_screen)
 
@@ -263,7 +311,7 @@ fn main() {
         )
         
         .insert_resource(DamageCooldown(Timer::from_seconds(0.5, TimerMode::Once)))
-        .insert_resource(GameMusicVolume(0.5)) // .5 volume by default
+        .insert_resource(GameMusicVolume(saved_volume))
         .run();
 }
 
@@ -272,8 +320,11 @@ fn check_win(
     rooms: Res<RoomVec>,
     reaper_q: Query<(), With<enemies::Reaper>>,
     level_complete: Option<Res<LevelComplete>>,
+    planet_marker: Option<Res<PlanetLevelMarker>>,
     asset_server: Res<AssetServer>,
 ){
+    // Planet level has its own win condition in planet.rs.
+    if planet_marker.is_some() { return; }
     // Only fire once.
     if level_complete.is_some() { return; }
 
@@ -320,16 +371,15 @@ fn check_return_to_airlock(
         &Health, &player::MaxHealth, &player::MoveSpeed, &weapons::WeaponInventory,
         &player::NumOfCleared, &player::Armor, &player::AirTank,
         &player::Regen, &player::Shield, &fluiddynamics::PulledByFluid,
-        &Transform,
+        &Transform, &player::WeaponBuffStacks,
     ), With<Player>>,
     level_complete: Option<Res<LevelComplete>>,
+    codes: Option<Res<station_code::StationCodes>>,
 ) {
     if level_complete.is_none() { return; }
 
-    let Ok((health, max_hp, move_spd, inventory, _num_cleared, armor, tank, regen, shield, pull, transform))
+    let Ok((health, max_hp, move_spd, inventory, _num_cleared, armor, tank, regen, shield, pull, transform, buff_stacks))
         = player_q.single() else { return; };
-    let weapon = inventory.current();
-
     let player_pos = transform.translation.truncate();
     let in_airlock = rooms.0.iter().any(|r| r.is_airlock && r.bounds_check(player_pos));
     if !in_airlock { return; }
@@ -339,21 +389,24 @@ fn check_return_to_airlock(
         max_health: max_hp.0,
         health: health.0,
         move_speed: move_spd.0,
-        fire_rate: weapon.fire_rate,
         // Reset cleared count so per-station scaling starts fresh.
         num_cleared: 0,
         armor: armor.0,
         air_tank_max: tank.max_capacity,
         air_tank_drain_rate: tank.drain_rate,
-        weapon_damage: weapon.damage,
-        piercing_pickups: weapon.piercing_pickups,
         regen_rate: regen.0,
         shield_max: shield.max,
         vacuum_mass: pull.mass,
-        extra_weapons: inventory.weapons.iter()
-            .filter(|w| w.weapon_type != weapons::WeaponType::Zapper)
-            .map(|w| w.weapon_type)
-            .collect(),
+        weapons: inventory.weapons.iter().map(|w| SavedWeapon {
+            weapon_type: w.weapon_type,
+            fire_rate: w.fire_rate,
+            damage: w.damage,
+            piercing_pickups: w.piercing_pickups,
+        }).collect(),
+        atk_speed_stacks: buff_stacks.atk_speed,
+        damage_stacks:     buff_stacks.damage,
+        piercing_stacks:   buff_stacks.piercing,
+        station_codes: codes.map(|c| c.codes).unwrap_or([None; 3]),
     });
     next_state.set(GameState::Win);
 }
@@ -414,7 +467,7 @@ fn load_win(
             ));
         });
 
-        // Button column — just two choices from the airlock
+        // Button column
         root.spawn((
             Node {
                 width: Val::Percent(100.0),
@@ -431,6 +484,32 @@ fn load_win(
             },
         ))
         .with_children(|col|{
+            // Enter Planet — available every 3rd station
+            if (station_level.0 + 1) % 3 == 0 {
+                col.spawn((
+                    Button,
+                    EndScreenButtons::EnterPlanet,
+                    Node {
+                        width: Val::Px(420.0),
+                        height: Val::Px(60.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        padding: UiRect::all(Val::Px(8.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.0, 0.3, 0.4, 0.9)),
+                    BorderColor(Color::srgba(0.2, 0.8, 1.0, 0.9)),
+                    BorderRadius::all(Val::Px(6.0)),
+                ))
+                .with_children(|b| {
+                    b.spawn((
+                        Text::new("Descend to Planet"),
+                        TextFont { font: font.clone(), font_size: 28.0, ..default() },
+                        TextColor(Color::WHITE),
+                    ));
+                });
+            }
+
             // Continue — board the next station, keep buffs
             col.spawn((
                 Button,
@@ -661,6 +740,34 @@ fn setup_ui_health(mut commands: Commands, asset_server: Res<AssetServer>, stati
                 });
             });
 
+            // ── Thruster fuel row ────────────────────────────────────────
+            col.spawn((Node {
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(4.0),
+                ..default()
+            },))
+            .with_children(|row| {
+                row.spawn((Node::default(),)).with_children(|c| {
+                    c.spawn((
+                        Text::new("DASH"),
+                        TextFont { font: font.clone(), font_size: 14.0, ..default() },
+                        TextColor(Color::srgb(0.4, 0.9, 1.0)),
+                    ));
+                });
+                for i in 0..10usize {
+                    row.spawn((
+                        Node {
+                            width: Val::Px(12.0),
+                            height: Val::Px(12.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.05, 0.15, 0.2, 0.9)),
+                        BorderRadius::all(Val::Px(3.0)),
+                        ThrusterDot(i),
+                    ));
+                }
+            });
+
             // ── Station label ────────────────────────────────────────────
             col.spawn((Node::default(),)).with_children(|c| {
                 c.spawn((
@@ -674,12 +781,13 @@ fn setup_ui_health(mut commands: Commands, asset_server: Res<AssetServer>, stati
 }
 
 fn update_ui_health_text(
-    player_q: Query<(&Health, &player::MaxHealth, &player::Shield), With<Player>>,
+    player_q: Query<(&Health, &player::MaxHealth, &player::Shield, &ThrusterFuel), With<Player>>,
     mut hp_fill_q: Query<(&mut Node, &mut BackgroundColor), (With<HealthBarFill>, Without<ShieldBarFill>)>,
     mut sh_fill_q: Query<(&mut Node, &mut BackgroundColor), (With<ShieldBarFill>, Without<HealthBarFill>)>,
-    mut sh_row_q: Query<&mut Visibility, With<ShieldBarRow>>,
+    mut sh_row_q: Query<&mut Visibility, (With<ShieldBarRow>, Without<ThrusterDot>)>,
+    mut dot_q: Query<(&ThrusterDot, &mut BackgroundColor, &mut Visibility), (Without<HealthBarFill>, Without<ShieldBarFill>, Without<ShieldBarRow>)>,
 ) {
-    let Ok((health, max_hp, shield)) = player_q.single() else { return };
+    let Ok((health, max_hp, shield, fuel)) = player_q.single() else { return };
 
     // HP bar width + color
     if let Ok((mut node, mut color)) = hp_fill_q.single_mut() {
@@ -698,6 +806,23 @@ fn update_ui_health_text(
         if let Ok((mut node, _)) = sh_fill_q.single_mut() {
             let ratio = (shield.current / shield.max).clamp(0.0, 1.0);
             node.width = Val::Percent(ratio * 100.0);
+        }
+    }
+
+    // Thruster fuel dots
+    let max_charges = fuel.max as usize;
+    let full_charges = fuel.current.floor() as usize;
+    for (dot, mut color, mut vis) in &mut dot_q {
+        let i = dot.0;
+        if i >= max_charges {
+            *vis = Visibility::Hidden;
+        } else {
+            *vis = Visibility::Visible;
+            *color = if i < full_charges {
+                BackgroundColor(Color::srgb(0.2, 0.85, 1.0))
+            } else {
+                BackgroundColor(Color::srgba(0.05, 0.15, 0.2, 0.9))
+            };
         }
     }
 }
@@ -770,8 +895,9 @@ fn toggle_game_music(
     asset_server: Res<AssetServer>,
     music_query: Query<Entity, With<GameMusic>>,
     volume: Res<GameMusicVolume>,
+    bindings: Res<settings::KeyBindings>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyM) {
+    if !keys.just_pressed(bindings.toggle_music) {
         return;
     }
 
@@ -807,14 +933,23 @@ fn handle_end_screen_buttons(
     mut interactions: Query<(&Interaction, &EndScreenButtons), (Changed<Interaction>, With<Button>)>,
     mut next_state: ResMut<NextState<GameState>>,
     mut station_level: ResMut<StationLevel>,
+    current_state: Res<State<GameState>>,
+    mut saved_buffs: Option<ResMut<SavedPlayerBuffs>>,
 ) {
     for (interaction, which) in &mut interactions {
-        
+
         if *interaction != Interaction::Pressed {
             continue;
         }
         match which {
             EndScreenButtons::Continue => {
+                // After a planet clear, reset collected codes for the next 3-station cycle.
+                if *current_state.get() == GameState::PlanetWin {
+                    if let Some(ref mut buffs) = saved_buffs {
+                        buffs.station_codes = [None; 3];
+                    }
+                    commands.insert_resource(station_code::StationCodes::default());
+                }
                 // Increment station level — buffs are already saved in SavedPlayerBuffs.
                 station_level.0 += 1;
                 info!("Continuing to station {} (difficulty increased)", station_level.0 + 1);
@@ -837,6 +972,10 @@ fn handle_end_screen_buttons(
                 station_level.0 = 0;
                 commands.remove_resource::<SavedPlayerBuffs>();
                 next_state.set(GameState::Menu);
+            }
+            EndScreenButtons::EnterPlanet => {
+                commands.insert_resource(PlanetLevelMarker);
+                next_state.set(GameState::Loading);
             }
         }
     }

@@ -4,7 +4,7 @@ use super::{Weapon, WeaponType};
 pub fn new() -> Weapon {
     Weapon {
         weapon_type: WeaponType::Zapper,
-        fire_rate: 0.7,
+        fire_rate: 0.5,
         bullet_speed: 700.0,
         damage: 25.0,
         bullet_size: 0.25,

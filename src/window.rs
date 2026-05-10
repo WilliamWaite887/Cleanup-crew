@@ -21,7 +21,6 @@ struct WindowAnimation {
     timer: Timer,
 }
 
-#[allow(dead_code)]
 #[derive(Component)]
 struct BrokenTimer(Timer);
 
@@ -38,7 +37,8 @@ impl Plugin for WindowPlugin {
         app
             .add_systems(Startup, load_window_graphics)
             .add_systems(Update, check_for_broken_windows)
-            .add_systems(Update, animate_broken_windows);
+            .add_systems(Update, animate_broken_windows)
+            .add_systems(Update, settle_broken_windows);
     }
 }
 
@@ -153,6 +153,25 @@ fn animate_broken_windows(
         if animation.timer.just_finished() {
             animation.frame_index = (animation.frame_index + 1) % window_graphics.broken.len();
             sprite.image = window_graphics.broken[animation.frame_index].clone();
+        }
+    }
+}
+
+// After the break animation plays through once, lock the window to the final shattered frame.
+fn settle_broken_windows(
+    mut commands: Commands,
+    time: Res<Time>,
+    window_graphics: Res<WindowGraphics>,
+    mut query: Query<(Entity, &mut Sprite, &mut BrokenTimer)>,
+) {
+    for (entity, mut sprite, mut timer) in query.iter_mut() {
+        timer.0.tick(time.delta());
+        if timer.0.just_finished() {
+            if let Some(last) = window_graphics.broken.last() {
+                sprite.image = last.clone();
+            }
+            commands.entity(entity).remove::<WindowAnimation>();
+            commands.entity(entity).remove::<BrokenTimer>();
         }
     }
 }

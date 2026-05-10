@@ -85,6 +85,20 @@ pub struct ThrusterFuel {
     pub max: f32,
 }
 
+/// Brief invincibility window inserted on the player when they dash.
+/// Removed automatically when the timer expires.
+#[derive(Component)]
+pub struct DashInvincibility(pub Timer);
+
+/// Counts how many times each weapon buff has been picked up so new weapons
+/// added mid-run (e.g., from a chest) receive the same buffs.
+#[derive(Component, Default, Clone)]
+pub struct WeaponBuffStacks {
+    pub atk_speed: u32,
+    pub damage: u32,
+    pub piercing: u32,
+}
+
 // #[derive(Resource)]
 // pub struct BulletRes(Handle<Image>, Handle<TextureAtlasLayout>);
 
@@ -152,6 +166,7 @@ impl Plugin for PlayerPlugin {
             // .add_systems(Startup, load_bullet)
             .add_systems(OnEnter(GameState::Playing), spawn_player.after(load_player))
             .add_systems(Update, regen_system.run_if(in_state(GameState::Playing)))
+            .add_systems(Update, tick_dash_invincibility.run_if(in_state(GameState::Playing)))
             .add_systems(Update, thruster_regen_system.run_if(in_state(GameState::Playing)))
             .add_systems(Update, thruster_dodge_system.run_if(in_state(GameState::Playing)).run_if(not(resource_exists::<crate::pause::IsPaused>)))
             .add_systems(Update, move_player.run_if(in_state(GameState::Playing)).run_if(not(resource_exists::<crate::pause::IsPaused>)))
@@ -248,34 +263,50 @@ fn spawn_player(
     let world_y = grid.y0 + (grid.rows as f32 - 1.0 - gy as f32) * TILE_SIZE + y_player_spawn_offset;
 
     // Apply saved buffs from previous station if continuing, otherwise use defaults
-    let (hp, max_hp, move_speed, fire_rate, num_cleared, armor, tank_max, tank_drain,
-         weapon_damage, piercing, regen_rate, shield_max, vacuum_mass) =
+    let (hp, max_hp, move_speed, num_cleared, armor, tank_max, tank_drain,
+         regen_rate, shield_max, vacuum_mass) =
         if let Some(buffs) = &saved_buffs {
             info!(
-                "Applying saved buffs: max_hp={}, hp={}, move_spd={}, fire_rate={}, cleared={}, armor={}, tank_max={}, tank_drain={}",
-                buffs.max_health, buffs.health, buffs.move_speed, buffs.fire_rate,
+                "Applying saved buffs: max_hp={}, hp={}, move_spd={}, cleared={}, armor={}, tank_max={}, tank_drain={}",
+                buffs.max_health, buffs.health, buffs.move_speed,
                 buffs.num_cleared, buffs.armor, buffs.air_tank_max, buffs.air_tank_drain_rate
             );
             (
-                buffs.health, buffs.max_health, buffs.move_speed, buffs.fire_rate,
+                buffs.health, buffs.max_health, buffs.move_speed,
                 buffs.num_cleared, buffs.armor, buffs.air_tank_max, buffs.air_tank_drain_rate,
-                buffs.weapon_damage, buffs.piercing_pickups, buffs.regen_rate, buffs.shield_max, buffs.vacuum_mass,
+                buffs.regen_rate, buffs.shield_max, buffs.vacuum_mass,
             )
         } else {
-            (100.0, 100.0, 1.0, 0.5, 0, 0.0, 5.0, 1.0, 25.0, 0u32, 0.0, 0.0, 50.0)
+            (100.0, 100.0, 1.0, 0, 0.0, 5.0, 1.0, 0.0, 0.0, 50.0)
         };
 
-    let mut weapon = Weapon::new(WeaponType::Zapper);
-    weapon.fire_rate = fire_rate;
-    weapon.shoot_timer = Timer::from_seconds(fire_rate, TimerMode::Once);
-    weapon.damage = weapon_damage;
-    weapon.piercing_pickups = piercing;
-    let mut inventory = WeaponInventory::new(weapon);
-    if let Some(buffs) = &saved_buffs {
-        for &wtype in &buffs.extra_weapons {
-            inventory.weapons.push(Weapon::new(wtype));
+    let buff_stacks = if let Some(buffs) = &saved_buffs {
+        WeaponBuffStacks {
+            atk_speed: buffs.atk_speed_stacks,
+            damage:    buffs.damage_stacks,
+            piercing:  buffs.piercing_stacks,
         }
-    }
+    } else {
+        WeaponBuffStacks::default()
+    };
+
+    let inventory = if let Some(buffs) = &saved_buffs {
+        if buffs.weapons.is_empty() {
+            WeaponInventory::new(Weapon::new(WeaponType::Zapper))
+        } else {
+            let weapons_vec: Vec<Weapon> = buffs.weapons.iter().map(|sw| {
+                let mut w = Weapon::new(sw.weapon_type);
+                w.fire_rate = sw.fire_rate;
+                w.shoot_timer = Timer::from_seconds(sw.fire_rate, TimerMode::Once);
+                w.damage = sw.damage;
+                w.piercing_pickups = sw.piercing_pickups;
+                w
+            }).collect();
+            WeaponInventory { weapons: weapons_vec, equipped: 0 }
+        }
+    } else {
+        WeaponInventory::new(Weapon::new(WeaponType::Zapper))
+    };
 
     commands.spawn((
         Sprite::from_atlas_image(
@@ -297,7 +328,7 @@ fn spawn_player(
         Collider { half_extents: Vec2::new(TILE_SIZE * 0.5, TILE_SIZE * 1.0) },
         Facing(FacingDirection::Down),
         NumOfCleared(num_cleared),
-        (PulledByFluid{mass: vacuum_mass}, AirTank::new(tank_max, tank_drain), ThrusterFuel { current: 0.0, max: 0.0 }),
+        (PulledByFluid{mass: vacuum_mass}, AirTank::new(tank_max, tank_drain), ThrusterFuel { current: 3.0, max: 3.0 }, buff_stacks),
         inventory,
         GameEntity,
     ));
@@ -311,6 +342,7 @@ fn spawn_player(
 fn move_player(
     time: Res<Time>,
     input: Res<ButtonInput<KeyCode>>,
+    buttons: Res<ButtonInput<MouseButton>>,
     mut player: Query<(&mut Transform, &mut Velocity, &mut Facing, &MoveSpeed, &mut WeaponInventory), With<Player>>,
     mut next_state: ResMut<NextState<GameState>>,
     // Excludes permanent wall tiles and tables — tables are handled by player_deflects_tables.
@@ -319,9 +351,10 @@ fn move_player(
     mut commands: Commands,
     bullet_res: Res<BulletRes>,
     beam_res: Res<BeamRifleRes>,
-    grid_query: Query<&crate::fluiddynamics::FluidGrid>,
-    buttons: Res<ButtonInput<MouseButton>>,
     weapon_sounds: Res<WeaponSounds>,
+    grid_query: Query<&crate::fluiddynamics::FluidGrid>,
+    bindings: Res<crate::settings::KeyBindings>,
+    mut sfx_cooldown: ResMut<crate::weapons::SfxCooldown>,
 ) {
     let Ok(grid) = grid_query.single() else {
         return;
@@ -335,19 +368,19 @@ fn move_player(
     if input.just_pressed(KeyCode::KeyT) {
         next_state.set(GameState::EndCredits);
     }
-    if input.pressed(KeyCode::KeyA) {
+    if input.pressed(bindings.move_left) {
         dir.x -= 1.;
         facing.0 = FacingDirection::Left;
     }
-    if input.pressed(KeyCode::KeyD) {
+    if input.pressed(bindings.move_right) {
         dir.x += 1.;
         facing.0 = FacingDirection::Right;
     }
-    if input.pressed(KeyCode::KeyW) {
+    if input.pressed(bindings.move_up) {
         dir.y += 1.;
         facing.0 = FacingDirection::Up;
     }
-    if input.pressed(KeyCode::KeyS) {
+    if input.pressed(bindings.move_down) {
         dir.y -= 1.;
         facing.0 = FacingDirection::Down;
     }
@@ -367,7 +400,7 @@ fn move_player(
     }
 
 
-    if input.pressed(KeyCode::Space) && inventory.current().can_shoot() && !buttons.pressed(MouseButton::Left) {
+    if input.pressed(bindings.shoot) && inventory.current().can_shoot() && !buttons.pressed(MouseButton::Left) {
         let bullet_dir = match facing.0 {
             FacingDirection::Up => Vec2::new(0.0, 1.0),
             FacingDirection::UpRight => Vec2::new(1.0, 1.0),
@@ -385,6 +418,7 @@ fn move_player(
             &bullet_res,
             &beam_res,
             &weapon_sounds,
+            &mut sfx_cooldown,
             transform.translation.truncate(),
             bullet_dir,
         );
@@ -523,15 +557,29 @@ impl DamageTimer {
 }
 }
 
+fn tick_dash_invincibility(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut q: Query<(Entity, &mut DashInvincibility)>,
+) {
+    for (entity, mut inv) in &mut q {
+        inv.0.tick(time.delta());
+        if inv.0.finished() {
+            commands.entity(entity).remove::<DashInvincibility>();
+        }
+    }
+}
+
 fn enemy_hits_player(
     time: Res<Time>,
-    mut player_query: Query<(&Transform, &mut crate::player::Health, &mut DamageTimer, &Armor, &mut Shield), With<crate::player::Player>>,
+    mut player_query: Query<(&Transform, &mut crate::player::Health, &mut DamageTimer, &Armor, &mut Shield, Option<&DashInvincibility>), With<crate::player::Player>>,
     enemy_query: Query<(Entity, &Transform, &crate::enemies::Health), With<Enemy>>,
     mut commands: Commands,
 ) {
     let player_half = Vec2::splat(32.0);
     let enemy_half = Vec2::splat(ENEMY_SIZE * 0.5);
-    for (player_tf, mut health, mut damage_timer, armor, mut shield) in &mut player_query {
+    for (player_tf, mut health, mut damage_timer, armor, mut shield, dash_inv) in &mut player_query {
+        if dash_inv.is_some() { continue; }
 
         damage_timer.0.tick(time.delta());
 
@@ -561,9 +609,11 @@ fn enemy_hits_player(
                     
                
                     if enemy_health.0 > 0.0 {
-                        commands.entity(enemy_entity).insert(HitAnimation {
-                            timer: Timer::from_seconds(0.3, TimerMode::Once),
-                        });
+                        if let Ok(mut ec) = commands.get_entity(enemy_entity) {
+                            ec.insert(HitAnimation {
+                                timer: Timer::from_seconds(0.3, TimerMode::Once),
+                            });
+                        }
                     }
                 }
             }
@@ -583,6 +633,7 @@ fn update_player_sprite(
     player_res: Res<PlayerRes>,
     input: Res<ButtonInput<KeyCode>>,
     mut frame_timer: Local<f32>,
+    bindings: Res<crate::settings::KeyBindings>,
 ) {
     *frame_timer += time.delta_secs();
 
@@ -591,13 +642,13 @@ fn update_player_sprite(
 
     for mut sprite in &mut query {
         // Select the current sprite sheet based on input
-        let (image, layout_handle) = if input.pressed(KeyCode::KeyW) {
+        let (image, layout_handle) = if input.pressed(bindings.move_up) {
             &player_res.up
-        } else if input.pressed(KeyCode::KeyS) {
+        } else if input.pressed(bindings.move_down) {
             &player_res.down
-        } else if input.pressed(KeyCode::KeyA) {
+        } else if input.pressed(bindings.move_left) {
             &player_res.left
-        } else if input.pressed(KeyCode::KeyD) {
+        } else if input.pressed(bindings.move_right) {
             &player_res.right
         } else {
             continue;
@@ -848,14 +899,16 @@ fn thruster_regen_system(
 }
 
 fn thruster_dodge_system(
+    mut commands: Commands,
     input: Res<ButtonInput<KeyCode>>,
-    mut q_player: Query<(&Transform, &mut Velocity, &mut ThrusterFuel), With<Player>>,
+    mut q_player: Query<(Entity, &Transform, &mut Velocity, &mut ThrusterFuel), With<Player>>,
     q_window: Query<&Window, With<PrimaryWindow>>,
     q_camera: Query<(&Camera, &GlobalTransform)>,
+    bindings: Res<crate::settings::KeyBindings>,
 ) {
-    if !input.just_pressed(KeyCode::ShiftLeft) { return; }
+    if !input.just_pressed(bindings.dash) { return; }
 
-    let Ok((player_tf, mut velocity, mut fuel)) = q_player.single_mut() else { return; };
+    let Ok((player_entity, player_tf, mut velocity, mut fuel)) = q_player.single_mut() else { return; };
     if fuel.max <= 0.0 || fuel.current < 1.0 { return; }
 
     let Ok(window) = q_window.single() else { return; };
@@ -869,4 +922,8 @@ fn thruster_dodge_system(
 
     velocity.0 = dir * 1000.0;
     fuel.current -= 1.0;
+
+    commands.entity(player_entity).insert(DashInvincibility(
+        Timer::from_seconds(0.15, TimerMode::Once),
+    ));
 }

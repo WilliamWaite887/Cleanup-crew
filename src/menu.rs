@@ -1,8 +1,7 @@
 use bevy::prelude::*;
 use bevy::app::AppExit;
 
-use crate::{GameState, GameMusicVolume, MusicTrack, ShowAirLabels};
-use crate::map::LevelToLoad;
+use crate::{GameState, GameMusicVolume, MusicTrack, PlanetLevelMarker};
 use crate::settings;
 
 pub struct MenuPlugin;
@@ -24,15 +23,11 @@ struct MenuUI;
 #[derive(Component)]
 enum MenuButton {
     Play,
-    PlayTestRoom,
+    PlayPlanet,
     Credits,
     Settings,
-    ToggleAirLabels,
     Quit,
 }
-
-#[derive(Component)]
-struct AirToggleText;
 
 #[derive(Component)]
 struct MenuMusic;
@@ -40,10 +35,8 @@ struct MenuMusic;
 fn setup_menu(
     mut commands: Commands,
     assets: Res<AssetServer>,
-    show_labels: Res<ShowAirLabels>, // read initial state for the checkbox
 ) {
     // Root canvas
-    let checked = show_labels.0;
     commands
         .spawn((
             Node {
@@ -108,6 +101,29 @@ fn setup_menu(
                         ImageNode::new(assets.load("menu/Title_Play.png")),
                     ));
 
+                    // Planet Test Button
+                    col.spawn((
+                        Button,
+                        MenuButton::PlayPlanet,
+                        Node {
+                            width: Val::Px(420.0),
+                            height: Val::Px(60.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            padding: UiRect::all(Val::Px(8.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.05, 0.2, 0.05, 0.8)),
+                        BorderColor(Color::srgba(0.3, 1.0, 0.3, 0.5)),
+                        BorderRadius::all(Val::Px(6.0)),
+                    ))
+                    .with_children(|b| {
+                        b.spawn((
+                            Text::new("Test Planet"),
+                            TextFont { font_size: 28.0, ..default() },
+                        ));
+                    });
+
                     // Credits
                     col.spawn((
                         Button,
@@ -135,69 +151,6 @@ fn setup_menu(
                         b.spawn((
                             Text::new("Settings"),
                             TextFont { font_size: 28.0, ..default() },
-                        ));
-                    });
-
-                    // Test Room Button (Text-based) – now BELOW Credits
-                    col.spawn((
-                        Button,
-                        MenuButton::PlayTestRoom,
-                        Node {
-                            width: Val::Px(420.0),
-                            height: Val::Px(60.0),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            padding: UiRect::all(Val::Px(8.0)),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.15, 0.15, 0.2, 0.7)),
-                        BorderColor(Color::srgba(1.0, 1.0, 1.0, 0.4)),
-                        BorderRadius::all(Val::Px(6.0)),
-                    ))
-                    .with_children(|b| {
-                        b.spawn((
-                            Text::new("Test Room"),
-                            TextFont { font_size: 28.0, ..default() },
-                        ));
-                    });
-
-                    // Air labels toggle row
-                    col.spawn((
-                        Node {
-                            width: Val::Px(420.0),
-                            height: Val::Px(60.0),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            column_gap: Val::Px(12.0),
-                            ..default()
-                        },
-                    ))
-                    .with_children(|row| {
-                        // Checkbox button (text-based)
-                        row.spawn((
-                            Button,
-                            MenuButton::ToggleAirLabels,
-                            Node {
-                                padding: UiRect::all(Val::Px(8.0)),
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgba(0.15, 0.15, 0.2, 0.7)),
-                            BorderColor(Color::srgba(1.0, 1.0, 1.0, 0.4)),
-                            BorderRadius::all(Val::Px(6.0)),
-                        ))
-                        .with_children(|b| {
-                            let mark = if checked { "[x]" } else { "[ ]" };
-                            b.spawn((
-                                Text::new(mark),
-                                TextFont { font_size: 28.0, ..default() },
-                                AirToggleText,
-                            ));
-                        });
-
-                        // Air pressure labels text
-                        row.spawn((
-                            Text::new("Show air pressure labels"),
-                            TextFont { font_size: 20.0, ..default() },
                         ));
                     });
 
@@ -240,7 +193,7 @@ fn setup_menu(
                         for line in [
                             "Controls",
                             "WASD — Move          Shift — Dash",
-                            "Left Click / Space — Shoot",
+                            "Left Click — Shoot",
                             "B — Broom (sweep, deflect bullets, fix windows)",
                             "Tab — Toggle Minimap",
                             "M — Toggle Music       Esc — Pause",
@@ -294,13 +247,9 @@ fn handle_buttons(
     window_mode: Res<settings::GameWindowMode>,
     mut interactions: Query<(&Interaction, &MenuButton, Entity), (Changed<Interaction>, With<Button>)>,
     mut next_state: ResMut<NextState<GameState>>,
-    mut show_labels: ResMut<ShowAirLabels>,
-    children_q: Query<&Children>,
-    mut texts: Query<&mut Text, With<AirToggleText>>,
-    mut level_to_load: ResMut<LevelToLoad>,
     mut app_exit: EventWriter<AppExit>,
 ) {
-    for (interaction, which, button_entity) in &mut interactions {
+    for (interaction, which, _button_entity) in &mut interactions {
         if *interaction != Interaction::Pressed {
             continue;
         }
@@ -309,8 +258,8 @@ fn handle_buttons(
             MenuButton::Play => {
                 next_state.set(GameState::Loading);
             }
-            MenuButton::PlayTestRoom => {
-                level_to_load.0 = "assets/rooms/window_room.txt".to_string();
+            MenuButton::PlayPlanet => {
+                commands.insert_resource(PlanetLevelMarker);
                 next_state.set(GameState::Loading);
             }
             MenuButton::Credits => {
@@ -327,19 +276,6 @@ fn handle_buttons(
             }
             MenuButton::Quit => {
                 app_exit.write(AppExit::Success);
-            }
-            MenuButton::ToggleAirLabels => {
-                // Flip the flag
-                show_labels.0 = !show_labels.0;
-
-
-                if let Ok(children) = children_q.get(button_entity) {
-                    for child in children.iter() {
-                        if let Ok(mut t) = texts.get_mut(child) {
-                            *t = Text::new(if show_labels.0 { "[x]" } else { "[ ]" });
-                        }
-                    }
-                }
             }
         }
     }

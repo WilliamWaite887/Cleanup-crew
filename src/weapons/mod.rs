@@ -4,6 +4,7 @@ pub mod beam_rifle;
 pub use beam_rifle::BeamRifleRes;
 
 use bevy::prelude::*;
+use bevy::audio::Volume;
 use crate::GameEntity;
 use crate::bullet::{Bullet, BulletOwner, Velocity, AnimationTimer, AnimationFrameCount, Piercing, HitEnemies};
 use crate::collidable::Collider;
@@ -105,12 +106,27 @@ pub struct WeaponSounds {
 #[derive(Component)]
 pub struct WeaponNameDisplay;
 
+/// Minimum seconds between plays of the same sound to prevent clipping.
+const SFX_MIN_INTERVAL: f32 = 0.12;
+/// Per-instance volume; even 3 overlapping tracks stay well under 1.0.
+const SFX_VOLUME: f32 = 0.4;
+
+/// Tracks cooldowns per sound channel so the same effect can't stack into clipping.
+#[derive(Resource, Default)]
+pub struct SfxCooldown {
+    pub player_laser: f32,
+    pub player_shoot: f32,
+    pub enemy_laser:  f32,
+}
+
 pub struct WeaponPlugin;
 
 impl Plugin for WeaponPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, load_weapon_assets)
+        app.init_resource::<SfxCooldown>()
+            .add_systems(Startup, load_weapon_assets)
             .add_systems(OnEnter(crate::GameState::Playing), spawn_weapon_hud)
+            .add_systems(Update, tick_sfx_cooldowns)
             .add_systems(
                 Update,
                 (update_weapon_timers, update_weapon_hud, cycle_weapons)
@@ -180,11 +196,19 @@ fn update_weapon_hud(
     text.0 = inv.equipped_name().to_string();
 }
 
+fn tick_sfx_cooldowns(time: Res<Time>, mut sfx: ResMut<SfxCooldown>) {
+    let dt = time.delta_secs();
+    sfx.player_laser = (sfx.player_laser - dt).max(0.0);
+    sfx.player_shoot = (sfx.player_shoot - dt).max(0.0);
+    sfx.enemy_laser  = (sfx.enemy_laser  - dt).max(0.0);
+}
+
 fn cycle_weapons(
     input: Res<ButtonInput<KeyCode>>,
     mut player_q: Query<&mut WeaponInventory, With<crate::player::Player>>,
+    bindings: Res<crate::settings::KeyBindings>,
 ) {
-    if !input.just_pressed(KeyCode::KeyQ) { return; }
+    if !input.just_pressed(bindings.swap_weapon) { return; }
     let Ok(mut inv) = player_q.single_mut() else { return; };
     inv.cycle_next();
 }
@@ -195,23 +219,35 @@ pub fn fire_weapon(
     bullet_res: &BulletRes,
     beam_res: &BeamRifleRes,
     weapon_sounds: &WeaponSounds,
+    sfx: &mut SfxCooldown,
     pos: Vec2,
     dir: Vec2,
 ) {
-    let sound = {
+    let sound_opt = {
         let weapon = inventory.current();
         match weapon.weapon_type {
             WeaponType::Zapper => {
                 spawn_bullet(commands, bullet_res, weapon, pos, dir);
-                weapon_sounds.laser.clone()
+                if sfx.player_laser <= 0.0 {
+                    sfx.player_laser = SFX_MIN_INTERVAL;
+                    Some(weapon_sounds.laser.clone())
+                } else { None }
             }
             WeaponType::BeamRifle => {
                 beam_rifle::spawn_bullet(commands, beam_res, weapon, pos, dir);
-                weapon_sounds.shoot.clone()
+                if sfx.player_shoot <= 0.0 {
+                    sfx.player_shoot = SFX_MIN_INTERVAL;
+                    Some(weapon_sounds.shoot.clone())
+                } else { None }
             }
         }
     };
-    commands.spawn((AudioPlayer::new(sound), PlaybackSettings::DESPAWN));
+    if let Some(sound) = sound_opt {
+        commands.spawn((
+            AudioPlayer::new(sound),
+            PlaybackSettings { volume: Volume::Linear(SFX_VOLUME), ..PlaybackSettings::DESPAWN },
+        ));
+    }
     inventory.current_mut().reset_timer();
 }
 
