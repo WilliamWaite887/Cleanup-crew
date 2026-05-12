@@ -31,6 +31,7 @@ pub mod pause;
 pub mod settings;
 pub mod key_chest;
 pub mod station_code;
+pub mod air_particles;
 
 pub const FONT_PATH: &str = "fonts/BitcountSingleInk-VariableFont_CRSV,ELSH,ELXP,SZP1,SZP2,XPN1,XPN2,YPN1,YPN2,slnt,wght.ttf";
 
@@ -241,6 +242,7 @@ fn main() {
             key_chest::KeyChestPlugin,
             station_code::StationCodePlugin,
             planet::PlanetPlugin,
+            air_particles::AirParticlePlugin,
         ))
         .add_systems(Startup, (setup_camera, rewards::load_reward_font))
         .add_systems(OnEnter(GameState::Menu), log_state_change)
