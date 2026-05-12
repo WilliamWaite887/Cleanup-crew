@@ -232,7 +232,7 @@ pub fn track_rooms(
         LevelState::NotRoom => {
             for (index, room) in rooms.0.iter_mut().enumerate() {
                 if !room.cleared && room.within_bounds_check(player_pos) {
-                    info!("[room] Player entered room {} at pos ({:.0},{:.0})", index, player_pos.x, player_pos.y);
+                    // info!("[room] Player entered room {} at pos ({:.0},{:.0})", index, player_pos.x, player_pos.y);
                     *lvlstate = LevelState::EnteredRoom(index);
                     break;
                 }
@@ -268,14 +268,14 @@ pub fn entered_room(
                 commands.entity(*door).insert(Sprite::from_image(tiles.closed_door.clone()));
             }
 
-            info!("[room] entered_room processing index={}, doors={}", index, rooms.0[index].doors.len());
+            // info!("[room] entered_room processing index={}, doors={}", index, rooms.0[index].doors.len());
             if let Some((pos, chest_pos)) = generate_enemies_in_room(1, None, &mut rooms, index, &mut commands, &enemy_res, &ranged_res, &turret_res, &play_query, station_level.0){
-                info!("[room] enemies spawned in room {}, numofenemies={}", index, rooms.0[index].numofenemies);
+                // info!("[room] enemies spawned in room {}, numofenemies={}", index, rooms.0[index].numofenemies);
                 *lvlstate = LevelState::InRoom(index, pos, chest_pos);
             } else {
                 // Room is too small/tight to place any enemies — clear it immediately
                 // and reopen the doors so the player is never locked in.
-                info!("[room] room {} auto-cleared (generate returned None)", index);
+                // info!("[room] room {} auto-cleared (generate returned None)", index);
                 rooms.0[index].cleared = true;
                 for door in rooms.0[index].doors.iter() {
                     commands.entity(*door).remove::<Collidable>();
@@ -336,7 +336,7 @@ pub fn playing_room(
         LevelState::InRoom(index, reward_pos, _) =>
         {
             if rooms.0[index].numofenemies == 0{
-                debug!("All enemies defeated");
+                // debug!("All enemies defeated");
 
                 let heart_pos = nearest_floor_pos(last_kill_pos.0, &wall_grid, &grid);
                 crate::heart::spawn_heart(&mut commands, &heart_res, heart_pos);
@@ -409,7 +409,7 @@ pub fn generate_enemies_in_room(
     }
 
     if floors.is_empty() {
-        info!("Room {} has zero floor tiles! Cannot spawn enemies.", index);
+        // info!("Room {} has zero floor tiles! Cannot spawn enemies.", index);
         return None;
     }
 
@@ -490,7 +490,7 @@ pub fn generate_enemies_in_room(
     room.numofenemies = actually_spawned;
 
     if actually_spawned == 0 {
-        info!("Room {}: all candidate tiles were adjacent to walls, cannot spawn.", index);
+        // info!("Room {}: all candidate tiles were adjacent to walls, cannot spawn.", index);
         return None;
     }
 
@@ -738,10 +738,10 @@ pub fn damage_player_from_low_pressure(
                 health.0 -= damage;
                 damage_timer.reset();
 
-                debug!(
-                    "Player taking pressure damage! Room pressure: {:.1}% - HP: {:.1}",
-                    room.air_pressure, health.0
-                );
+                // debug!(
+                //     "Player taking pressure damage! Room pressure: {:.1}% - HP: {:.1}",
+                //     room.air_pressure, health.0
+                // );
             }
         }
     }
