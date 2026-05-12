@@ -12,11 +12,11 @@ pub struct BeamRifleRes {
 pub fn new() -> Weapon {
     Weapon {
         weapon_type: WeaponType::BeamRifle,
-        fire_rate: 0.08,
+        fire_rate: 0.1,
         bullet_speed: 1800.0,
         damage: 8.0,
         bullet_size: 0.5,
-        shoot_timer: Timer::from_seconds(0.08, TimerMode::Once),
+        shoot_timer: Timer::from_seconds(0.1, TimerMode::Once),
         piercing_pickups: 0,
     }
 }
