@@ -1,4 +1,6 @@
 use bevy::prelude::*;
+use rand::random_range;
+use std::f32::consts::TAU;
 
 use crate::bullet::{Bullet, BulletOwner, AnimationTimer, AnimationFrameCount};
 use crate::collidable::{Collidable, Collider};
@@ -23,6 +25,8 @@ pub struct ReaperState {
     /// True when the reaper spawned in the last uncleared room.
     /// Prevents auto-despawn on room-clear so the player must kill it.
     pub spawned_in_final_room: bool,
+    pub summoning_circle: Option<Entity>,
+    pub spawn_position: Option<Vec3>,
 }
 
 impl Default for ReaperState {
@@ -32,6 +36,8 @@ impl Default for ReaperState {
             current_room: None,
             spawned_in_room: None,
             spawned_in_final_room: false,
+            summoning_circle: None,
+            spawn_position: None,
         }
     }
 }
@@ -59,6 +65,17 @@ struct ReaperWarning {
     timer: Timer,
 }
 
+#[derive(Component)]
+struct SummoningCircle {
+    emit_timer: Timer,
+}
+
+#[derive(Component)]
+struct SummoningParticle {
+    velocity: Vec2,
+    lifetime: Timer,
+}
+
 // ── Plugin ─────────────────────────────────────────────────────────────────
 
 pub struct ReaperPlugin;
@@ -78,6 +95,8 @@ impl Plugin for ReaperPlugin {
                     bullet_hits_reaper,
                     table_hits_reaper,
                     reaper_cleanup_system,
+                    update_summoning_circle,
+                    update_summoning_particles,
                 )
                     .run_if(in_state(GameState::Playing)),
             );
@@ -145,6 +164,31 @@ fn spawn_reaper_warning(commands: &mut Commands, assets: &AssetServer) {
         });
 }
 
+fn spawn_summoning_circle(commands: &mut Commands, pos: Vec3) -> Entity {
+    const RADIUS: f32 = 55.0;
+    const SEGMENTS: usize = 24;
+
+    commands.spawn((
+        Transform::from_translation(pos),
+        Visibility::Visible,
+        SummoningCircle {
+            emit_timer: Timer::from_seconds(0.08, TimerMode::Repeating),
+        },
+        GameEntity,
+    ))
+    .with_children(|parent| {
+        for i in 0..SEGMENTS {
+            let angle = i as f32 * TAU / SEGMENTS as f32;
+            let offset = Vec2::new(angle.cos(), angle.sin()) * RADIUS;
+            parent.spawn((
+                Sprite::from_color(Color::srgba(1.0, 0.05, 0.05, 0.85), Vec2::splat(7.0)),
+                Transform::from_translation(offset.extend(0.0)),
+            ));
+        }
+    })
+    .id()
+}
+
 // ── Systems ────────────────────────────────────────────────────────────────
 
 fn reaper_room_timer(
@@ -168,6 +212,16 @@ fn reaper_room_timer(
                 state.current_room = Some(idx);
                 state.spawned_in_room = None;
                 state.timer.reset();
+
+                if let Ok(player_tf) = player_q.single() {
+                    let angle = random_range(0.0..TAU);
+                    let offset = Vec2::new(angle.cos(), angle.sin()) * 220.0;
+                    let pos = player_tf.translation.truncate() + offset;
+                    let spawn_pos = Vec3::new(pos.x, pos.y, Z_ENTITIES);
+                    state.spawn_position = Some(spawn_pos);
+                    let circle = spawn_summoning_circle(&mut commands, spawn_pos);
+                    state.summoning_circle = Some(circle);
+                }
             }
             if state.spawned_in_room == Some(idx) {
                 return;
@@ -177,7 +231,14 @@ fn reaper_room_timer(
             if state.timer.finished() {
                 if let Ok(player_tf) = player_q.single() {
                     let p = player_tf.translation;
-                    let spawn_pos = p + Vec3::new(120.0, 0.0, Z_ENTITIES);
+                    let spawn_pos = state.spawn_position
+                        .unwrap_or(p + Vec3::new(220.0, 0.0, Z_ENTITIES));
+                    if let Some(circle) = state.summoning_circle.take() {
+                        if let Ok(mut e) = commands.get_entity(circle) {
+                            e.despawn();
+                        }
+                    }
+                    state.spawn_position = None;
                     // Mark whether this is the last uncleared room so cleanup
                     // knows not to auto-despawn the reaper when the room clears.
                     let uncleared = rooms.0.iter().filter(|r| !r.cleared).count();
@@ -193,6 +254,12 @@ fn reaper_room_timer(
                 state.current_room = None;
                 state.spawned_in_room = None;
                 state.timer.reset();
+                if let Some(circle) = state.summoning_circle.take() {
+                    if let Ok(mut e) = commands.get_entity(circle) {
+                        e.despawn();
+                    }
+                }
+                state.spawn_position = None;
             }
         }
     }
@@ -397,5 +464,56 @@ fn spawn_reaper_bullets(
                 PlaybackSettings { volume: bevy::audio::Volume::Linear(0.4), ..PlaybackSettings::DESPAWN },
             ));
         }
+    }
+}
+
+fn update_summoning_circle(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut q: Query<(&mut Transform, &mut SummoningCircle)>,
+) {
+    for (mut tf, mut circle) in &mut q {
+        tf.rotation *= Quat::from_rotation_z(1.5 * time.delta_secs());
+
+        circle.emit_timer.tick(time.delta());
+        if !circle.emit_timer.just_finished() {
+            continue;
+        }
+
+        let center = tf.translation.truncate();
+        for _ in 0..2 {
+            let angle = random_range(0.0..TAU);
+            let spawn = center + Vec2::new(angle.cos(), angle.sin()) * 55.0;
+            let dir = Vec2::new(angle.cos(), angle.sin() + 0.4).normalize();
+            let speed = random_range(60.0..=140.0);
+            commands.spawn((
+                Sprite::from_color(
+                    Color::srgba(1.0, random_range(0.0..=0.25_f32), 0.0, 0.9),
+                    Vec2::splat(random_range(3.0..=5.0_f32)),
+                ),
+                Transform::from_translation(spawn.extend(Z_ENTITIES + 3.0)),
+                SummoningParticle {
+                    velocity: dir * speed,
+                    lifetime: Timer::from_seconds(random_range(0.4..=1.0_f32), TimerMode::Once),
+                },
+                GameEntity,
+            ));
+        }
+    }
+}
+
+fn update_summoning_particles(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut q: Query<(Entity, &mut Transform, &mut Sprite, &mut SummoningParticle)>,
+) {
+    for (entity, mut tf, mut sprite, mut p) in &mut q {
+        p.lifetime.tick(time.delta());
+        if p.lifetime.finished() {
+            commands.entity(entity).despawn();
+            continue;
+        }
+        tf.translation += (p.velocity * time.delta_secs()).extend(0.0);
+        sprite.color = sprite.color.with_alpha(1.0 - p.lifetime.fraction());
     }
 }
