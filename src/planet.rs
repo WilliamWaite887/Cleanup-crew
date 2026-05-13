@@ -10,12 +10,21 @@ use crate::room::{Room, RoomVec};
 use crate::station_code::StationCodes;
 use crate::rewards::RewardRes;
 use crate::{
-    EndScreenButtons, GameEntity, GameState, PlanetCount, PlanetLevelMarker,
-    StationLevel, FONT_PATH, TILE_SIZE, Z_ENTITIES,
+    EndScreenButtons, GameEntity, GameState, MainCamera, PlanetCount, PlanetLevelMarker,
+    StationLevel, FONT_PATH, TILE_SIZE, WIN_H, WIN_W, Z_ENTITIES, Z_FLOOR,
 };
 use crate::player::{Player, aabb_overlap};
 
 // ── Components ───────────────────────────────────────────────────────────────
+
+#[derive(Component)]
+struct BackgroundSprite;
+
+#[derive(Resource)]
+struct BackgroundRes {
+    stars: Handle<Image>,
+    planet_station: Handle<Image>,
+}
 
 #[derive(Component)]
 pub struct FinalBoss;
@@ -74,6 +83,7 @@ pub struct PlanetPlugin;
 impl Plugin for PlanetPlugin {
     fn build(&self, app: &mut App) {
         app
+            .add_systems(Startup, load_background_assets)
             .add_systems(
                 OnEnter(GameState::Loading),
                 setup_planet_level
@@ -89,8 +99,24 @@ impl Plugin for PlanetPlugin {
             )
             .add_systems(
                 OnEnter(GameState::Playing),
+                spawn_stars_background
+                    .run_if(|sl: Res<StationLevel>, m: Option<Res<PlanetLevelMarker>>|
+                        sl.0 % 3 != 2 && m.is_none()),
+            )
+            .add_systems(
+                OnEnter(GameState::Playing),
+                spawn_planet_station_background
+                    .run_if(|sl: Res<StationLevel>, m: Option<Res<PlanetLevelMarker>>|
+                        sl.0 % 3 == 2 && m.is_none()),
+            )
+            .add_systems(
+                OnEnter(GameState::Playing),
                 (tint_planet_background, init_boss_arena_state, spawn_vault_rewards)
                     .run_if(resource_exists::<PlanetLevelMarker>),
+            )
+            .add_systems(
+                Update,
+                update_background_position.run_if(in_state(GameState::Playing)),
             )
             .add_systems(
                 Update,
@@ -286,7 +312,60 @@ fn setup_planet_level(mut commands: Commands, planet_count: Res<PlanetCount>) {
     commands.insert_resource(build_planet_rooms(planet_idx));
 }
 
-// ── Background tints ─────────────────────────────────────────────────────────
+// ── Background tints & images ─────────────────────────────────────────────────
+
+fn load_background_assets(mut commands: Commands, assets: Res<AssetServer>) {
+    commands.insert_resource(BackgroundRes {
+        stars: assets.load("stars_background.png"),
+        planet_station: assets.load("planet_background.png"),
+    });
+}
+
+fn spawn_background(commands: &mut Commands, image: Handle<Image>, size: Vec2) {
+    commands.spawn((
+        Sprite {
+            image,
+            custom_size: Some(size),
+            ..default()
+        },
+        Transform::from_xyz(0.0, 0.0, Z_FLOOR - 10.0),
+        BackgroundSprite,
+        GameEntity,
+    ));
+}
+
+fn spawn_stars_background(
+    mut commands: Commands,
+    bg: Res<BackgroundRes>,
+    window_q: Query<&Window>,
+) {
+    let size = window_q.single()
+        .map(|w| Vec2::new(w.width(), w.height()))
+        .unwrap_or(Vec2::new(WIN_W, WIN_H));
+    spawn_background(&mut commands, bg.stars.clone(), size);
+}
+
+fn spawn_planet_station_background(
+    mut commands: Commands,
+    bg: Res<BackgroundRes>,
+    window_q: Query<&Window>,
+) {
+    let size = window_q.single()
+        .map(|w| Vec2::new(w.width(), w.height()))
+        .unwrap_or(Vec2::new(WIN_W, WIN_H));
+    spawn_background(&mut commands, bg.planet_station.clone(), size);
+}
+
+fn update_background_position(
+    camera_q: Query<&Transform, With<MainCamera>>,
+    mut bg_q: Query<&mut Transform, (With<BackgroundSprite>, Without<MainCamera>)>,
+) {
+    let Ok(cam_tf) = camera_q.single() else { return };
+    for mut bg_tf in &mut bg_q {
+        bg_tf.translation.x = cam_tf.translation.x;
+        bg_tf.translation.y = cam_tf.translation.y;
+    }
+}
 
 fn tint_station_background(mut clear_color: ResMut<ClearColor>) {
     clear_color.0 = Color::srgb(0.06, 0.02, 0.10);
@@ -300,11 +379,15 @@ fn restore_background(
     mut commands: Commands,
     mut clear_color: ResMut<ClearColor>,
     bar_q: Query<Entity, With<BossHealthBarRoot>>,
+    bg_q: Query<Entity, With<BackgroundSprite>>,
 ) {
     clear_color.0 = Color::srgb(0.02, 0.02, 0.06);
     commands.remove_resource::<PlanetLevelMarker>();
     commands.remove_resource::<BossArenaState>();
     for e in &bar_q {
+        commands.entity(e).despawn();
+    }
+    for e in &bg_q {
         commands.entity(e).despawn();
     }
 }
