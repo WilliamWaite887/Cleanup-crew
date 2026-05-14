@@ -6,6 +6,7 @@ use bevy::audio::Volume;
 use crate::air::{init_air_grid, spawn_pressure_labels, update_pressure_labels, update_air_on_window_break};
 use crate::room::RoomVec;
 
+pub mod crash_log;
 pub mod collidable;
 pub mod endcredits;
 pub mod planet;
@@ -183,6 +184,7 @@ enum GameState {
 }
 
 fn main() {
+    crash_log::install();
     let (saved_volume, saved_mode, saved_bindings) = settings::load_config();
 
     App::new()
