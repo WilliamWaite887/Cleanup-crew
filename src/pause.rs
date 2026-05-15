@@ -45,6 +45,8 @@ fn handle_escape(
     controls_ui_q: Query<Entity, With<settings::ControlsUI>>,
     mut binding_state: ResMut<settings::BindingState>,
     bindings: Res<settings::KeyBindings>,
+    mut minimap_vis: ResMut<crate::minimap::MinimapVisible>,
+    mut minimap_root_q: Query<&mut Visibility, With<crate::minimap::MinimapRoot>>,
 ) {
     if !keys.just_pressed(bindings.pause) {
         return;
@@ -69,6 +71,15 @@ fn handle_escape(
         commands.remove_resource::<settings::SettingsOrigin>();
         for e in &settings_ui_q {
             commands.entity(e).despawn();
+        }
+        return;
+    }
+
+    // Escape closes the map/inventory screen before pausing.
+    if minimap_vis.0 {
+        minimap_vis.0 = false;
+        if let Ok(mut vis) = minimap_root_q.single_mut() {
+            *vis = Visibility::Hidden;
         }
         return;
     }

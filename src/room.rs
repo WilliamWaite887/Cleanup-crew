@@ -31,6 +31,8 @@ pub struct Room{
     pub is_airlock: bool,
     pub doors:Vec<Entity>,
     pub numofenemies: usize,
+    pub base_enemies: usize,
+    pub health_mult: f32,
     pub top_left_corner: Vec2,
     pub bot_right_corner: Vec2,
     pub tile_top_left_corner: Vec2,
@@ -48,6 +50,8 @@ impl Room{
             is_airlock: false,
             doors:Vec::new(),
             numofenemies: 0,
+            base_enemies: 1,
+            health_mult: 1.0,
             top_left_corner: tlc.clone(),
             bot_right_corner: brc.clone(),
             tile_top_left_corner: tile_tlc.clone(),
@@ -228,6 +232,7 @@ pub fn track_rooms(
         LevelState::NotRoom => {
             for (index, room) in rooms.0.iter_mut().enumerate() {
                 if !room.cleared && room.within_bounds_check(player_pos) {
+                    // info!("[room] Player entered room {} at pos ({:.0},{:.0})", index, player_pos.x, player_pos.y);
                     *lvlstate = LevelState::EnteredRoom(index);
                     break;
                 }
@@ -263,11 +268,14 @@ pub fn entered_room(
                 commands.entity(*door).insert(Sprite::from_image(tiles.closed_door.clone()));
             }
 
+            // info!("[room] entered_room processing index={}, doors={}", index, rooms.0[index].doors.len());
             if let Some((pos, chest_pos)) = generate_enemies_in_room(1, None, &mut rooms, index, &mut commands, &enemy_res, &ranged_res, &turret_res, &play_query, station_level.0){
+                // info!("[room] enemies spawned in room {}, numofenemies={}", index, rooms.0[index].numofenemies);
                 *lvlstate = LevelState::InRoom(index, pos, chest_pos);
             } else {
                 // Room is too small/tight to place any enemies — clear it immediately
                 // and reopen the doors so the player is never locked in.
+                // info!("[room] room {} auto-cleared (generate returned None)", index);
                 rooms.0[index].cleared = true;
                 for door in rooms.0[index].doors.iter() {
                     commands.entity(*door).remove::<Collidable>();
@@ -321,17 +329,20 @@ pub fn playing_room(
     last_kill_pos: Res<LastKillPos>,
     wall_grid: Res<crate::map::WallGrid>,
     grid: Res<crate::map::MapGridMeta>,
+    planet: Option<Res<crate::PlanetLevelMarker>>,
 ){
     match *lvlstate
     {
         LevelState::InRoom(index, reward_pos, _) =>
         {
             if rooms.0[index].numofenemies == 0{
-                debug!("All enemies defeated");
+                // debug!("All enemies defeated");
 
                 let heart_pos = nearest_floor_pos(last_kill_pos.0, &wall_grid, &grid);
                 crate::heart::spawn_heart(&mut commands, &heart_res, heart_pos);
-                crate::rewards::spawn_reward(&mut commands, reward_pos, &reward_res);
+                if planet.is_none() {
+                    crate::rewards::spawn_reward(&mut commands, reward_pos, &reward_res);
+                }
 
                 for door in rooms.0[index].doors.iter(){
                     commands.entity(*door).remove::<Collidable>();
@@ -366,14 +377,12 @@ pub fn generate_enemies_in_room(
     let mut floors: Vec<(f32, f32)> = Vec::new();
 
     let room = &mut rooms.0[index];
-    // Scale enemy count: base + rooms_cleared + station_level bonus
-    // Each station adds 2 extra enemies per room
     let station_bonus = (station_level as usize) * 2;
-    let scaled_num_enemies = 1 * rooms_cleared + num_of_enemies + station_bonus;
+    let base = room.base_enemies.max(num_of_enemies);
+    let scaled_num_enemies = rooms_cleared + base + station_bonus;
     room.numofenemies = scaled_num_enemies;
 
-    // Health multiplier: each station increases enemy health by 50%
-    let health_multiplier = 1.0 + (station_level as f32) * 0.5;
+    let health_multiplier = (1.0 + (station_level as f32) * 0.5) * room.health_mult;
 
     // Speed bonus: +10 units per room cleared, giving a gradual ramp-up
     let speed_bonus = rooms_cleared as f32 * 10.0;
@@ -400,7 +409,7 @@ pub fn generate_enemies_in_room(
     }
 
     if floors.is_empty() {
-        info!("Room {} has zero floor tiles! Cannot spawn enemies.", index);
+        // info!("Room {} has zero floor tiles! Cannot spawn enemies.", index);
         return None;
     }
 
@@ -481,7 +490,7 @@ pub fn generate_enemies_in_room(
     room.numofenemies = actually_spawned;
 
     if actually_spawned == 0 {
-        info!("Room {}: all candidate tiles were adjacent to walls, cannot spawn.", index);
+        // info!("Room {}: all candidate tiles were adjacent to walls, cannot spawn.", index);
         return None;
     }
 
@@ -626,28 +635,25 @@ pub fn apply_breach_forces_to_entities(
     time: Res<Time>,
     rooms: Res<RoomVec>,
     mut tables: Query<(&Transform, &mut crate::enemies::Velocity, &crate::fluiddynamics::PulledByFluid), With<crate::table::Table>>,
-    mut player: Query<(&Transform, &mut crate::bullet::Velocity, &crate::fluiddynamics::PulledByFluid), (With<crate::player::Player>, Without<crate::table::Table>)>,  // Changed to bullet::Velocity
+    player_transform: Query<&Transform, (With<crate::player::Player>, Without<crate::table::Table>)>,
     mut enemies: Query<(&Transform, &mut crate::enemies::Velocity, &crate::fluiddynamics::PulledByFluid), (With<crate::enemies::Enemy>, Without<crate::player::Player>, Without<crate::table::Table>)>,
 ) {
-    // Determine which room the player is in
-    let player_room = if let Ok((player_transform, _, _)) = player.single() {
-        let player_pos = player_transform.translation.truncate();
+    // Determine which room the player is in (read-only — player suction is handled
+    // by apply_breach_force_to_player in player.rs with better distance-based physics).
+    let player_room = if let Ok(tf) = player_transform.single() {
+        let player_pos = tf.translation.truncate();
         rooms.0.iter().find(|room| room.bounds_check(player_pos))
     } else {
         None
     };
 
     let Some(room) = player_room else {
-        //println!("Player is not inside any room. Physics deactivated for all rooms.");
         return;
     };
 
     if room.breaches.is_empty() {
-        //println!("Player entered room, but it has no breaches. Physics deactivated for this room.");
         return;
     }
-
-    //println!("Player entered room. Physics for this room is activated. Other rooms are deactivated.");
 
     // Helper closure to apply suction toward the room's breaches
     let apply_suction = |world_pos: Vec2, mass: f32, velocity: &mut Vec2| {
@@ -656,23 +662,17 @@ pub fn apply_breach_forces_to_entities(
             let to_breach = breach_world_pos - world_pos;
             let distance = to_breach.length();
             if distance > 1.0 {
-                total_force += to_breach.normalize() * 25000.0; // force magnitude
+                total_force += to_breach.normalize() * 25000.0;
             }
         }
         let acceleration = total_force / mass;
         *velocity += acceleration * time.delta().as_secs_f32();
 
-        // Clamp maximum speed
         let max_velocity = 200.0;
         if velocity.length() > max_velocity {
             *velocity = velocity.normalize() * max_velocity;
         }
     };
-
-    // Apply only to player in the room (always in that room)
-    if let Ok((transform, mut velocity, pulled_by_fluid)) = player.single_mut() {
-        apply_suction(transform.translation.truncate(), pulled_by_fluid.mass, &mut **velocity);
-    }
 
     // Apply only to enemies in the room
     for (transform, mut velocity, pulled_by_fluid) in enemies.iter_mut() {
@@ -729,10 +729,10 @@ pub fn damage_player_from_low_pressure(
                 health.0 -= damage;
                 damage_timer.reset();
 
-                debug!(
-                    "Player taking pressure damage! Room pressure: {:.1}% - HP: {:.1}",
-                    room.air_pressure, health.0
-                );
+                // debug!(
+                //     "Player taking pressure damage! Room pressure: {:.1}% - HP: {:.1}",
+                //     room.air_pressure, health.0
+                // );
             }
         }
     }

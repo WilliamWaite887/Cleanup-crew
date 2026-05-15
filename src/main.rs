@@ -6,6 +6,7 @@ use bevy::audio::Volume;
 use crate::air::{init_air_grid, spawn_pressure_labels, update_pressure_labels, update_air_on_window_break};
 use crate::room::RoomVec;
 
+pub mod crash_log;
 pub mod collidable;
 pub mod endcredits;
 pub mod planet;
@@ -31,8 +32,12 @@ pub mod pause;
 pub mod settings;
 pub mod key_chest;
 pub mod station_code;
+pub mod station_color;
+pub mod station_symbol;
+pub mod air_particles;
 
 pub const FONT_PATH: &str = "fonts/BitcountSingleInk-VariableFont_CRSV,ELSH,ELXP,SZP1,SZP2,XPN1,XPN2,YPN1,YPN2,slnt,wght.ttf";
+pub const SYMBOL_FONT_PATH: &str = "fonts/NotoSansMono-VariableFont_wdth,wght.ttf";
 
 
 
@@ -157,6 +162,10 @@ pub struct SavedPlayerBuffs {
     pub piercing_stacks: u32,
     /// Code digits collected from the 3 stations in the current cycle (index = station-in-cycle).
     pub station_codes: [Option<u8>; 3],
+    /// Color indices collected from the 3 stations (0=RED 1=GRN 2=BLU 3=YLW).
+    pub station_colors: [Option<u8>; 3],
+    /// Symbol indices collected from the 3 stations (0=▲ 1=● 2=■ 3=⬡ 4=✦ 5=⊕).
+    pub station_symbols: [Option<u8>; 3],
 }
 
 #[derive(Component)]
@@ -182,6 +191,7 @@ enum GameState {
 }
 
 fn main() {
+    crash_log::install();
     let (saved_volume, saved_mode, saved_bindings) = settings::load_config();
 
     App::new()
@@ -241,6 +251,11 @@ fn main() {
             key_chest::KeyChestPlugin,
             station_code::StationCodePlugin,
             planet::PlanetPlugin,
+            air_particles::AirParticlePlugin,
+        ))
+        .add_plugins((
+            station_color::StationColorPlugin,
+            station_symbol::StationSymbolPlugin,
         ))
         .add_systems(Startup, (setup_camera, rewards::load_reward_font))
         .add_systems(OnEnter(GameState::Menu), log_state_change)
@@ -375,6 +390,8 @@ fn check_return_to_airlock(
     ), With<Player>>,
     level_complete: Option<Res<LevelComplete>>,
     codes: Option<Res<station_code::StationCodes>>,
+    colors: Option<Res<station_color::StationColors>>,
+    symbols: Option<Res<station_symbol::StationSymbols>>,
 ) {
     if level_complete.is_none() { return; }
 
@@ -406,7 +423,9 @@ fn check_return_to_airlock(
         atk_speed_stacks: buff_stacks.atk_speed,
         damage_stacks:     buff_stacks.damage,
         piercing_stacks:   buff_stacks.piercing,
-        station_codes: codes.map(|c| c.codes).unwrap_or([None; 3]),
+        station_codes:   codes.map(|c| c.codes).unwrap_or([None; 3]),
+        station_colors:  colors.map(|c| c.colors).unwrap_or([None; 3]),
+        station_symbols: symbols.map(|s| s.symbols).unwrap_or([None; 3]),
     });
     next_state.set(GameState::Win);
 }
@@ -946,9 +965,13 @@ fn handle_end_screen_buttons(
                 // After a planet clear, reset collected codes for the next 3-station cycle.
                 if *current_state.get() == GameState::PlanetWin {
                     if let Some(ref mut buffs) = saved_buffs {
-                        buffs.station_codes = [None; 3];
+                        buffs.station_codes   = [None; 3];
+                        buffs.station_colors  = [None; 3];
+                        buffs.station_symbols = [None; 3];
                     }
                     commands.insert_resource(station_code::StationCodes::default());
+                    commands.insert_resource(station_color::StationColors::default());
+                    commands.insert_resource(station_symbol::StationSymbols::default());
                 }
                 // Increment station level — buffs are already saved in SavedPlayerBuffs.
                 station_level.0 += 1;

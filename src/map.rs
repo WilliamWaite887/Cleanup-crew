@@ -11,7 +11,7 @@ use crate::room::*; // RoomRes, track_rooms
 use crate::window;
 use crate::{GameState, MainCamera, GameEntity, TILE_SIZE, WIN_H, WIN_W, Z_FLOOR};
 use crate::procgen::{ProcgenSet};
-use crate::planet::CodeDoor;
+use crate::planet::{CodeDoor, ColorTerminal, SymbolTerminal, FreqMaster};
 
 
 #[derive(Resource, Debug, Clone)]
@@ -263,6 +263,9 @@ pub fn setup_tilemap(
     let mut glass_positions = Vec::new();
     let mut door_positions = Vec::new();
     let mut code_door_positions = Vec::new();
+    let mut color_terminal_positions = Vec::new();
+    let mut symbol_terminal_positions = Vec::new();
+    let mut freq_master_positions = Vec::new();
     let mut floor_strips: Vec<(Vec3, Vec2)> = Vec::new(); // (center, size)
 
     for (row_i, row) in level.level.iter().enumerate() {
@@ -284,7 +287,7 @@ pub fn setup_tilemap(
             let is_floor = if col_i < row_len {
                 let ch = chars[col_i];
                 let is_gen_table = generated_tables.contains(&(col_i, row_i));
-                matches!(ch, '#' | 'S' | 'T' | 'W' | 'G' | 'E' | 'D' | 'C') || is_gen_table
+                matches!(ch, '#' | 'S' | 'T' | 'W' | 'G' | 'E' | 'D' | 'C' | 'K' | 'Y' | 'F') || is_gen_table
             } else {
                 false // sentinel to flush the last strip
             };
@@ -322,6 +325,15 @@ pub fn setup_tilemap(
                 }
                 ('C', _, _) => {
                     code_door_positions.push(Vec2::new(x, y));
+                }
+                ('K', _, _) => {
+                    color_terminal_positions.push(Vec2::new(x, y));
+                }
+                ('Y', _, _) => {
+                    symbol_terminal_positions.push(Vec2::new(x, y));
+                }
+                ('F', _, _) => {
+                    freq_master_positions.push(Vec2::new(x, y));
                 }
                 _ => {}
             }
@@ -450,18 +462,75 @@ pub fn setup_tilemap(
 
     // Spawn code-locked doors — start closed/collidable; opened only via correct code entry.
     for &pos in &code_door_positions {
-        let mut sprite = Sprite::from_image(tiles.closed_door.clone());
-        sprite.custom_size = Some(Vec2::new(TILE_SIZE, TILE_SIZE));
+        let sprite = Sprite::from_image(tiles.closed_door.clone());
         commands.spawn((
             sprite,
             Transform {
                 translation: Vec3::new(pos.x, pos.y, z_from_y(pos.y)),
+                scale: Vec3::new(1.0, 1.0, 1.0),
                 ..Default::default()
             },
             Collidable,
             Collider { half_extents: Vec2::splat(TILE_SIZE * 0.5) },
             CodeDoor { unlocked: false },
             Name::new("CodeDoor"),
+            GameEntity,
+        ));
+    }
+
+    // Spawn color terminals (K tiles) — locked, orange tint.
+    for &pos in &color_terminal_positions {
+        let mut sprite = Sprite::from_image(tiles.closed_door.clone());
+        sprite.color = Color::srgb(1.0, 0.6, 0.2);
+        commands.spawn((
+            sprite,
+            Transform {
+                translation: Vec3::new(pos.x, pos.y, z_from_y(pos.y)),
+                scale: Vec3::new(1.0, 1.0, 1.0),
+                ..Default::default()
+            },
+            Collidable,
+            Collider { half_extents: Vec2::splat(TILE_SIZE * 0.5) },
+            ColorTerminal { unlocked: false },
+            Name::new("ColorTerminal"),
+            GameEntity,
+        ));
+    }
+
+    // Spawn symbol terminals (Y tiles) — locked, purple tint.
+    for &pos in &symbol_terminal_positions {
+        let mut sprite = Sprite::from_image(tiles.closed_door.clone());
+        sprite.color = Color::srgb(0.7, 0.2, 1.0);
+        commands.spawn((
+            sprite,
+            Transform {
+                translation: Vec3::new(pos.x, pos.y, z_from_y(pos.y)),
+                scale: Vec3::new(1.0, 1.0, 1.0),
+                ..Default::default()
+            },
+            Collidable,
+            Collider { half_extents: Vec2::splat(TILE_SIZE * 0.5) },
+            SymbolTerminal { unlocked: false },
+            Name::new("SymbolTerminal"),
+            GameEntity,
+        ));
+    }
+
+    // Spawn frequency master gates (F tiles) — locked, green tint; opens boss arena.
+    for &pos in &freq_master_positions {
+        let mut sprite = Sprite::from_image(tiles.closed_door.clone());
+        sprite.color = Color::srgb(0.2, 1.0, 0.4);
+        commands.spawn((
+            sprite,
+            Transform {
+                translation: Vec3::new(pos.x, pos.y, z_from_y(pos.y)),
+                scale: Vec3::new(1.0, 1.0, 1.0),
+                ..Default::default()
+            },
+            Collidable,
+            Collider { half_extents: Vec2::splat(TILE_SIZE * 0.5) },
+            FreqMaster { unlocked: false },
+            Name::new("FreqMaster"),
             GameEntity,
         ));
     }
