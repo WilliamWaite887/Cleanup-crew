@@ -1,8 +1,10 @@
 use bevy::prelude::*;
 use std::collections::HashSet;
 use crate::map::{LevelRes, MapGridMeta};
-use crate::player::Player;
+use crate::player::{Player, WeaponBuffStacks};
 use crate::room::{LevelState, RoomVec};
+use crate::station_code::StationCodes;
+use crate::weapons::WeaponInventory;
 use crate::{GameEntity, GameState, TILE_SIZE};
 
 const MINIMAP_W: f32 = 420.0;
@@ -16,7 +18,7 @@ const REVEAL_RADIUS: i32 = 3;
 // Components
 
 #[derive(Component)]
-struct MinimapRoot;
+pub struct MinimapRoot;
 
 #[derive(Component)]
 struct MinimapRoomNode {
@@ -31,6 +33,18 @@ struct MinimapHallwayNode {
 
 #[derive(Component)]
 struct MinimapPlayerDot;
+
+/// Marker for each weapon text row in the inventory panel (index = slot in WeaponInventory).
+#[derive(Component)]
+struct InventoryWeaponLine(usize);
+
+/// Marker for each buff text row.
+#[derive(Component)]
+enum InventoryBuffLine { AtkSpeed, Damage, Piercing }
+
+/// Marker for the station clue text.
+#[derive(Component)]
+struct InventoryCluesLine;
 
 // Resources
 
@@ -61,7 +75,7 @@ impl Plugin for MinimapPlugin {
             )
             .add_systems(
                 Update,
-                update_minimap
+                (update_minimap, update_inventory_panel)
                     .run_if(in_state(GameState::Playing))
                     .run_if(|vis: Res<MinimapVisible>| vis.0),
             );
@@ -142,8 +156,8 @@ fn setup_minimap(
                 height: Val::Percent(100.0),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
-                flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(10.0),
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(32.0),
                 ..default()
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.78)),
@@ -153,100 +167,181 @@ fn setup_minimap(
             GameEntity,
         ))
         .with_children(|root| {
-            // Title
-            root.spawn((
-                Text::new("MINIMAP   [TAB] to close"),
-                TextFont { font, font_size: 18.0, ..default() },
-                TextColor(Color::srgb(0.65, 0.65, 0.65)),
-            ));
-
-            // Legend row
+            // ── Left column: map ─────────────────────────────────────────────
             root.spawn((
                 Node {
-                    flex_direction: FlexDirection::Row,
-                    column_gap: Val::Px(18.0),
+                    flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
+                    row_gap: Val::Px(10.0),
                     ..default()
                 },
             ))
-            .with_children(|leg| {
-                legend_item(leg, Color::srgba(0.2, 0.2, 0.2, 0.6),  "Unexplored");
-                legend_item(leg, Color::srgb(1.0, 0.9, 0.0),         "Current");
-                legend_item(leg, Color::srgb(0.15, 0.65, 0.15),      "Cleared");
-            });
+            .with_children(|left| {
+                // Title
+                left.spawn((
+                    Text::new("MAP   [TAB] to close"),
+                    TextFont { font: font.clone(), font_size: 18.0, ..default() },
+                    TextColor(Color::srgb(0.65, 0.65, 0.65)),
+                ));
 
-            // Map panel
-            root.spawn((
-                Node {
-                    width: Val::Px(MINIMAP_W),
-                    height: Val::Px(MINIMAP_H),
-                    ..default()
-                },
-                BackgroundColor(Color::srgba(0.04, 0.04, 0.12, 1.0)),
-            ))
-            .with_children(|panel| {
-                // Room nodes
-                for (i, room) in rooms.0.iter().enumerate() {
-                    let mini_x = (room.top_left_corner.x - world_min_x) / map_px_w * MINIMAP_W;
-                    let mini_y = (world_max_y - room.top_left_corner.y) / map_px_h * MINIMAP_H;
-                    let mini_w = ((room.bot_right_corner.x - room.top_left_corner.x).abs()
-                        / map_px_w * MINIMAP_W).max(6.0);
-                    let mini_h = ((room.top_left_corner.y - room.bot_right_corner.y).abs()
-                        / map_px_h * MINIMAP_H).max(6.0);
-
-                    panel.spawn((
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(mini_x),
-                            top: Val::Px(mini_y),
-                            width: Val::Px(mini_w),
-                            height: Val::Px(mini_h),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.2, 0.2, 0.2, 0.5)),
-                        MinimapRoomNode { room_index: i },
-                    ));
-                }
-
-                // Hallway nodes (hidden until explored)
-                for (cell_col, cell_row) in &hallway_cells {
-                    let tile_col = *cell_col as usize * HALLWAY_CELL + HALLWAY_CELL / 2;
-                    let tile_row = *cell_row as usize * HALLWAY_CELL + HALLWAY_CELL / 2;
-
-                    let mini_x = (tile_col as f32 / cols as f32 * MINIMAP_W - cell_w * 0.5).max(0.0);
-                    let mini_y = (tile_row as f32 / rows as f32 * MINIMAP_H - cell_h * 0.5).max(0.0);
-
-                    panel.spawn((
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(mini_x),
-                            top: Val::Px(mini_y),
-                            width: Val::Px(cell_w),
-                            height: Val::Px(cell_h),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.0)), // invisible until visited
-                        Visibility::Hidden,
-                        MinimapHallwayNode { cell_col: *cell_col, cell_row: *cell_row },
-                    ));
-                }
-
-                // Player dot
-                panel.spawn((
+                // Legend row
+                left.spawn((
                     Node {
-                        position_type: PositionType::Absolute,
-                        left: Val::Px(0.0),
-                        top: Val::Px(0.0),
-                        width: Val::Px(8.0),
-                        height: Val::Px(8.0),
+                        flex_direction: FlexDirection::Row,
+                        column_gap: Val::Px(18.0),
+                        align_items: AlignItems::Center,
                         ..default()
                     },
-                    BackgroundColor(Color::srgb(1.0, 1.0, 0.0)),
-                    ZIndex(1),
-                    MinimapPlayerDot,
+                ))
+                .with_children(|leg| {
+                    legend_item(leg, Color::srgba(0.2, 0.2, 0.2, 0.6), "Unexplored");
+                    legend_item(leg, Color::srgb(1.0, 0.9, 0.0),        "Current");
+                    legend_item(leg, Color::srgb(0.15, 0.65, 0.15),     "Cleared");
+                });
+
+                // Map panel
+                left.spawn((
+                    Node {
+                        width: Val::Px(MINIMAP_W),
+                        height: Val::Px(MINIMAP_H),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.04, 0.04, 0.12, 1.0)),
+                ))
+                .with_children(|panel| {
+                    for (i, room) in rooms.0.iter().enumerate() {
+                        let mini_x = (room.top_left_corner.x - world_min_x) / map_px_w * MINIMAP_W;
+                        let mini_y = (world_max_y - room.top_left_corner.y) / map_px_h * MINIMAP_H;
+                        let mini_w = ((room.bot_right_corner.x - room.top_left_corner.x).abs()
+                            / map_px_w * MINIMAP_W).max(6.0);
+                        let mini_h = ((room.top_left_corner.y - room.bot_right_corner.y).abs()
+                            / map_px_h * MINIMAP_H).max(6.0);
+
+                        panel.spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Px(mini_x),
+                                top: Val::Px(mini_y),
+                                width: Val::Px(mini_w),
+                                height: Val::Px(mini_h),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.2, 0.2, 0.2, 0.5)),
+                            MinimapRoomNode { room_index: i },
+                        ));
+                    }
+
+                    for (cell_col, cell_row) in &hallway_cells {
+                        let tile_col = *cell_col as usize * HALLWAY_CELL + HALLWAY_CELL / 2;
+                        let tile_row = *cell_row as usize * HALLWAY_CELL + HALLWAY_CELL / 2;
+
+                        let mini_x = (tile_col as f32 / cols as f32 * MINIMAP_W - cell_w * 0.5).max(0.0);
+                        let mini_y = (tile_row as f32 / rows as f32 * MINIMAP_H - cell_h * 0.5).max(0.0);
+
+                        panel.spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Px(mini_x),
+                                top: Val::Px(mini_y),
+                                width: Val::Px(cell_w),
+                                height: Val::Px(cell_h),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
+                            Visibility::Hidden,
+                            MinimapHallwayNode { cell_col: *cell_col, cell_row: *cell_row },
+                        ));
+                    }
+
+                    panel.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(0.0),
+                            top: Val::Px(0.0),
+                            width: Val::Px(8.0),
+                            height: Val::Px(8.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(1.0, 1.0, 0.0)),
+                        ZIndex(1),
+                        MinimapPlayerDot,
+                    ));
+                });
+            });
+
+            // ── Right column: inventory ───────────────────────────────────────
+            root.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Stretch,
+                    row_gap: Val::Px(4.0),
+                    width: Val::Px(360.0),
+                    padding: UiRect::all(Val::Px(16.0)),
+                    align_self: AlignSelf::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.04, 0.06, 0.14, 0.95)),
+                BorderColor(Color::srgba(0.3, 0.5, 0.8, 0.6)),
+                BorderRadius::all(Val::Px(8.0)),
+            ))
+            .with_children(|inv| {
+                inv.spawn((
+                    Text::new("INVENTORY"),
+                    TextFont { font: font.clone(), font_size: 22.0, ..default() },
+                    TextColor(Color::WHITE),
+                    Node { align_self: AlignSelf::Center, margin: UiRect::bottom(Val::Px(8.0)), ..default() },
+                ));
+
+                inv_section_header(inv, &font, "WEAPONS");
+                // Placeholder rows — updated each frame by update_inventory_panel.
+                // Spawn up to 4 weapon slots (expand as needed).
+                for i in 0..4usize {
+                    inv.spawn((
+                        Text::new(""),
+                        TextFont { font: font.clone(), font_size: 15.0, ..default() },
+                        TextColor(Color::srgb(0.6, 0.6, 0.6)),
+                        InventoryWeaponLine(i),
+                    ));
+                }
+
+                inv_section_header(inv, &font, "BUFFS");
+                inv.spawn((
+                    Text::new(""),
+                    TextFont { font: font.clone(), font_size: 15.0, ..default() },
+                    TextColor(Color::srgb(0.4, 1.0, 0.5)),
+                    InventoryBuffLine::AtkSpeed,
+                ));
+                inv.spawn((
+                    Text::new(""),
+                    TextFont { font: font.clone(), font_size: 15.0, ..default() },
+                    TextColor(Color::srgb(0.4, 1.0, 0.5)),
+                    InventoryBuffLine::Damage,
+                ));
+                inv.spawn((
+                    Text::new(""),
+                    TextFont { font: font.clone(), font_size: 15.0, ..default() },
+                    TextColor(Color::srgb(0.4, 1.0, 0.5)),
+                    InventoryBuffLine::Piercing,
+                ));
+
+                inv_section_header(inv, &font, "STATION CLUES");
+                inv.spawn((
+                    Text::new(""),
+                    TextFont { font: font.clone(), font_size: 15.0, ..default() },
+                    TextColor(Color::srgb(0.2, 1.0, 1.0)),
+                    InventoryCluesLine,
                 ));
             });
         });
+}
+
+fn inv_section_header(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, title: &str) {
+    parent.spawn((
+        Text::new(format!("── {} ──", title)),
+        TextFont { font: font.clone(), font_size: 13.0, ..default() },
+        TextColor(Color::srgb(0.5, 0.7, 1.0)),
+        Node { margin: UiRect::top(Val::Px(6.0)), ..default() },
+    ));
 }
 
 fn legend_item(parent: &mut ChildSpawnerCommands, color: Color, label: &str) {
@@ -284,6 +379,48 @@ fn toggle_minimap(
     visible.0 = !visible.0;
     if let Ok(mut vis) = root_q.single_mut() {
         *vis = if visible.0 { Visibility::Visible } else { Visibility::Hidden };
+    }
+}
+
+fn update_inventory_panel(
+    player_q: Query<(&WeaponInventory, &WeaponBuffStacks), With<Player>>,
+    codes: Res<StationCodes>,
+    mut weapon_lines: Query<(&InventoryWeaponLine, &mut Text, &mut TextColor)>,
+    mut buff_lines: Query<(&InventoryBuffLine, &mut Text, &mut TextColor)>,
+    mut clue_line: Query<&mut Text, (With<InventoryCluesLine>, Without<InventoryBuffLine>, Without<InventoryWeaponLine>)>,
+) {
+    let Ok((inv, buffs)) = player_q.single() else { return };
+
+    for (slot, mut text, mut color) in &mut weapon_lines {
+        if let Some(weapon) = inv.weapons.get(slot.0) {
+            let equipped = slot.0 == inv.equipped;
+            let prefix = if equipped { "► " } else { "  " };
+            let pierce = weapon.effective_pierce_count();
+            *text = Text::new(format!(
+                "{}{:<12}  dmg:{:.0}  pierce:{}",
+                prefix, weapon.weapon_type.name(), weapon.damage, pierce,
+            ));
+            *color = TextColor(if equipped { Color::WHITE } else { Color::srgb(0.6, 0.6, 0.6) });
+        } else {
+            *text = Text::new("");
+        }
+    }
+
+    for (buff, mut text, mut color) in &mut buff_lines {
+        let (label, count) = match buff {
+            InventoryBuffLine::AtkSpeed => ("Atk Speed", buffs.atk_speed),
+            InventoryBuffLine::Damage   => ("Damage",    buffs.damage),
+            InventoryBuffLine::Piercing => ("Piercing",  buffs.piercing),
+        };
+        *text = Text::new(format!("  {:<12}  +{}", label, count));
+        *color = TextColor(if count > 0 { Color::srgb(0.4, 1.0, 0.5) } else { Color::srgb(0.5, 0.5, 0.5) });
+    }
+
+    if let Ok(mut text) = clue_line.single_mut() {
+        let slots: Vec<String> = codes.codes.iter().map(|c| {
+            c.map_or("[ ? ]".to_string(), |d| format!("[ {} ]", d))
+        }).collect();
+        *text = Text::new(format!("  CODE  {}", slots.join("  ")));
     }
 }
 

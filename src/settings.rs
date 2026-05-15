@@ -73,9 +73,10 @@ pub struct KeyBindings {
     pub shoot:          KeyCode,
     pub swap_weapon:    KeyCode,
     pub interact:       KeyCode,
-    pub toggle_minimap: KeyCode,
-    pub toggle_music:   KeyCode,
-    pub pause:          KeyCode,
+    pub toggle_minimap:    KeyCode,
+    pub toggle_music:      KeyCode,
+    pub pause:             KeyCode,
+    pub toggle_inventory:  KeyCode,
 }
 
 impl Default for KeyBindings {
@@ -89,9 +90,10 @@ impl Default for KeyBindings {
             shoot:          KeyCode::Space,
             swap_weapon:    KeyCode::KeyQ,
             interact:       KeyCode::KeyE,
-            toggle_minimap: KeyCode::Tab,
-            toggle_music:   KeyCode::KeyM,
-            pause:          KeyCode::Escape,
+            toggle_minimap:   KeyCode::Tab,
+            toggle_music:     KeyCode::KeyM,
+            pause:            KeyCode::Escape,
+            toggle_inventory: KeyCode::KeyI,
         }
     }
 }
@@ -108,26 +110,28 @@ impl KeyBindings {
             BindableAction::Shoot         => self.shoot,
             BindableAction::SwapWeapon    => self.swap_weapon,
             BindableAction::Interact      => self.interact,
-            BindableAction::ToggleMinimap => self.toggle_minimap,
-            BindableAction::ToggleMusic   => self.toggle_music,
-            BindableAction::Pause         => self.pause,
+            BindableAction::ToggleMinimap   => self.toggle_minimap,
+            BindableAction::ToggleMusic     => self.toggle_music,
+            BindableAction::Pause           => self.pause,
+            BindableAction::ToggleInventory => self.toggle_inventory,
         }
     }
 
     /// Rebinds the given action to a new key.
     pub fn set_key(&mut self, action: BindableAction, key: KeyCode) {
         match action {
-            BindableAction::MoveLeft      => self.move_left      = key,
-            BindableAction::MoveRight     => self.move_right     = key,
-            BindableAction::MoveUp        => self.move_up        = key,
-            BindableAction::MoveDown      => self.move_down      = key,
-            BindableAction::Dash          => self.dash           = key,
-            BindableAction::Shoot         => self.shoot          = key,
-            BindableAction::SwapWeapon    => self.swap_weapon    = key,
-            BindableAction::Interact      => self.interact       = key,
-            BindableAction::ToggleMinimap => self.toggle_minimap = key,
-            BindableAction::ToggleMusic   => self.toggle_music   = key,
-            BindableAction::Pause         => self.pause          = key,
+            BindableAction::MoveLeft        => self.move_left        = key,
+            BindableAction::MoveRight       => self.move_right       = key,
+            BindableAction::MoveUp          => self.move_up          = key,
+            BindableAction::MoveDown        => self.move_down        = key,
+            BindableAction::Dash            => self.dash             = key,
+            BindableAction::Shoot           => self.shoot            = key,
+            BindableAction::SwapWeapon      => self.swap_weapon      = key,
+            BindableAction::Interact        => self.interact         = key,
+            BindableAction::ToggleMinimap   => self.toggle_minimap   = key,
+            BindableAction::ToggleMusic     => self.toggle_music     = key,
+            BindableAction::Pause           => self.pause            = key,
+            BindableAction::ToggleInventory => self.toggle_inventory = key,
         }
     }
 
@@ -187,7 +191,7 @@ pub const REBINDABLE_KEYS: &[KeyCode] = &[
 pub enum BindableAction {
     MoveLeft, MoveRight, MoveUp, MoveDown,
     Dash, Shoot, SwapWeapon, Interact,
-    ToggleMinimap, ToggleMusic, Pause,
+    ToggleMinimap, ToggleMusic, Pause, ToggleInventory,
 }
 
 impl BindableAction {
@@ -201,9 +205,10 @@ impl BindableAction {
             Self::Shoot         => "Shoot",
             Self::SwapWeapon    => "Swap Weapon",
             Self::Interact      => "Interact",
-            Self::ToggleMinimap => "Toggle Minimap",
-            Self::ToggleMusic   => "Toggle Music",
-            Self::Pause         => "Pause",
+            Self::ToggleMinimap   => "Toggle Minimap",
+            Self::ToggleMusic     => "Toggle Music",
+            Self::Pause           => "Pause",
+            Self::ToggleInventory => "Toggle Inventory",
         }
     }
 }
@@ -610,7 +615,7 @@ const ALL_ACTIONS: &[BindableAction] = &[
     BindableAction::Dash,      BindableAction::Shoot,
     BindableAction::SwapWeapon, BindableAction::Interact,
     BindableAction::ToggleMinimap, BindableAction::ToggleMusic,
-    BindableAction::Pause,
+    BindableAction::Pause, BindableAction::ToggleInventory,
 ];
 
 pub fn open_controls(commands: &mut Commands, assets: &AssetServer, bindings: &KeyBindings) {
