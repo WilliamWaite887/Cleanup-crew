@@ -386,6 +386,12 @@ fn reaper_cleanup_system(
         state.current_room = None;
         state.spawned_in_room = None;
         state.timer.reset();
+        if let Some(circle) = state.summoning_circle.take() {
+            if let Ok(mut e) = commands.get_entity(circle) {
+                e.despawn();
+            }
+        }
+        state.spawn_position = None;
     }
 }
 
