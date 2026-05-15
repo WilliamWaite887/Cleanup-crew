@@ -385,8 +385,8 @@ fn toggle_minimap(
 fn update_inventory_panel(
     player_q: Query<(&WeaponInventory, &WeaponBuffStacks), With<Player>>,
     codes: Res<StationCodes>,
-    mut weapon_lines: Query<(&InventoryWeaponLine, &mut Text, &mut TextColor)>,
-    mut buff_lines: Query<(&InventoryBuffLine, &mut Text, &mut TextColor)>,
+    mut weapon_lines: Query<(&InventoryWeaponLine, &mut Text, &mut TextColor), (Without<InventoryBuffLine>, Without<InventoryCluesLine>)>,
+    mut buff_lines: Query<(&InventoryBuffLine, &mut Text, &mut TextColor), (Without<InventoryWeaponLine>, Without<InventoryCluesLine>)>,
     mut clue_line: Query<&mut Text, (With<InventoryCluesLine>, Without<InventoryBuffLine>, Without<InventoryWeaponLine>)>,
 ) {
     let Ok((inv, buffs)) = player_q.single() else { return };
