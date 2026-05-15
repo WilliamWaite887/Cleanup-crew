@@ -93,8 +93,8 @@ fn spawn_symbol_chip(
         return;
     };
 
-    let center = (target_room.top_left_corner + target_room.bot_right_corner) * 0.5;
-    let pos = Vec3::new(center.x + TILE_SIZE * 2.0, center.y - TILE_SIZE * 2.0, Z_ENTITIES);
+    let Some(floor) = target_room.random_floor_tile() else { return; };
+    let pos = Vec3::new(floor.x, floor.y, Z_ENTITIES);
 
     let mut sprite = Sprite::from_image(res.img.clone());
     sprite.color = Color::srgb(0.7, 0.2, 1.0);
