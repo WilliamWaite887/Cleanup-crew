@@ -355,6 +355,8 @@ fn move_player(
     grid_query: Query<&crate::fluiddynamics::FluidGrid>,
     bindings: Res<crate::settings::KeyBindings>,
     mut sfx_cooldown: ResMut<crate::weapons::SfxCooldown>,
+    code_session: Option<Res<crate::planet::CodeEntryState>>,
+    term_session: Option<Res<crate::planet::TerminalSession>>,
 ) {
     let Ok(grid) = grid_query.single() else {
         return;
@@ -362,6 +364,9 @@ fn move_player(
     let Ok((mut transform, mut velocity, mut facing, spd, mut inventory)) = player.single_mut() else {
         return;
     };
+
+    // Block all player input while a terminal or code door keypad is open.
+    if code_session.is_some() || term_session.is_some() { return; }
 
     let mut dir: Vec2 = Vec2::ZERO;
 

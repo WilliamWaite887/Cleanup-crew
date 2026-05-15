@@ -4,6 +4,9 @@ use crate::map::{LevelRes, MapGridMeta};
 use crate::player::{Player, WeaponBuffStacks};
 use crate::room::{LevelState, RoomVec};
 use crate::station_code::StationCodes;
+use crate::station_color::StationColors;
+use crate::station_symbol::StationSymbols;
+use crate::planet::PlanetSignals;
 use crate::weapons::WeaponInventory;
 use crate::{GameEntity, GameState, TILE_SIZE};
 
@@ -42,9 +45,9 @@ struct InventoryWeaponLine(usize);
 #[derive(Component)]
 enum InventoryBuffLine { AtkSpeed, Damage, Piercing }
 
-/// Marker for the station clue text.
+/// Marker for each station clue row in the inventory panel.
 #[derive(Component)]
-struct InventoryCluesLine;
+enum InventoryClueRow { Code, Color, Symbol, Signal }
 
 // Resources
 
@@ -329,7 +332,29 @@ fn setup_minimap(
                     Text::new(""),
                     TextFont { font: font.clone(), font_size: 15.0, ..default() },
                     TextColor(Color::srgb(0.2, 1.0, 1.0)),
-                    InventoryCluesLine,
+                    InventoryClueRow::Code,
+                ));
+                inv.spawn((
+                    Text::new(""),
+                    TextFont { font: font.clone(), font_size: 15.0, ..default() },
+                    TextColor(Color::srgb(1.0, 0.5, 0.3)),
+                    InventoryClueRow::Color,
+                ));
+                inv.spawn((
+                    Text::new(""),
+                    TextFont {
+                        font: asset_server.load(crate::SYMBOL_FONT_PATH),
+                        font_size: 15.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.8, 0.4, 1.0)),
+                    InventoryClueRow::Symbol,
+                ));
+                inv.spawn((
+                    Text::new(""),
+                    TextFont { font: font.clone(), font_size: 15.0, ..default() },
+                    TextColor(Color::srgb(0.2, 1.0, 0.4)),
+                    InventoryClueRow::Signal,
                 ));
             });
         });
@@ -385,9 +410,12 @@ fn toggle_minimap(
 fn update_inventory_panel(
     player_q: Query<(&WeaponInventory, &WeaponBuffStacks), With<Player>>,
     codes: Res<StationCodes>,
-    mut weapon_lines: Query<(&InventoryWeaponLine, &mut Text, &mut TextColor), (Without<InventoryBuffLine>, Without<InventoryCluesLine>)>,
-    mut buff_lines: Query<(&InventoryBuffLine, &mut Text, &mut TextColor), (Without<InventoryWeaponLine>, Without<InventoryCluesLine>)>,
-    mut clue_line: Query<&mut Text, (With<InventoryCluesLine>, Without<InventoryBuffLine>, Without<InventoryWeaponLine>)>,
+    colors: Res<StationColors>,
+    symbols: Res<StationSymbols>,
+    signals: Option<Res<PlanetSignals>>,
+    mut weapon_lines: Query<(&InventoryWeaponLine, &mut Text, &mut TextColor), (Without<InventoryBuffLine>, Without<InventoryClueRow>)>,
+    mut buff_lines: Query<(&InventoryBuffLine, &mut Text, &mut TextColor), (Without<InventoryWeaponLine>, Without<InventoryClueRow>)>,
+    mut clue_rows: Query<(&InventoryClueRow, &mut Text, &mut TextColor), (Without<InventoryBuffLine>, Without<InventoryWeaponLine>)>,
 ) {
     let Ok((inv, buffs)) = player_q.single() else { return };
 
@@ -416,11 +444,40 @@ fn update_inventory_panel(
         *color = TextColor(if count > 0 { Color::srgb(0.4, 1.0, 0.5) } else { Color::srgb(0.5, 0.5, 0.5) });
     }
 
-    if let Ok(mut text) = clue_line.single_mut() {
-        let slots: Vec<String> = codes.codes.iter().map(|c| {
-            c.map_or("[ ? ]".to_string(), |d| format!("[ {} ]", d))
-        }).collect();
-        *text = Text::new(format!("  CODE  {}", slots.join("  ")));
+    let color_names = ["RED", "GRN", "BLU", "YLW"];
+    let symbol_chars = crate::station_symbol::SYMBOL_CHARS;
+
+    for (row, mut text, _) in &mut clue_rows {
+        match row {
+            InventoryClueRow::Code => {
+                let slots: Vec<String> = codes.codes.iter().map(|c| {
+                    c.map_or("[?]".to_string(), |d| format!("[{}]", d))
+                }).collect();
+                *text = Text::new(format!("  CODE  {}", slots.join(" ")));
+            }
+            InventoryClueRow::Color => {
+                let slots: Vec<String> = colors.colors.iter().map(|c| {
+                    c.map_or("[?  ]".to_string(), |d| format!("[{}]", color_names[d as usize]))
+                }).collect();
+                *text = Text::new(format!("  CLR   {}", slots.join(" ")));
+            }
+            InventoryClueRow::Symbol => {
+                let slots: Vec<String> = symbols.symbols.iter().map(|s| {
+                    s.map_or("[?]".to_string(), |d| format!("[{}]", symbol_chars[d as usize]))
+                }).collect();
+                *text = Text::new(format!("  SYM   {}", slots.join(" ")));
+            }
+            InventoryClueRow::Signal => {
+                if let Some(ref sigs) = signals {
+                    let slots: Vec<String> = sigs.signals.iter().map(|s| {
+                        s.map_or("[?]".to_string(), |v| format!("[{}]", v))
+                    }).collect();
+                    *text = Text::new(format!("  SIG   {}", slots.join(" ")));
+                } else {
+                    *text = Text::new("  SIG   — — —");
+                }
+            }
+        }
     }
 }
 

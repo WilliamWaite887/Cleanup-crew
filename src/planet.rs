@@ -8,10 +8,14 @@ use crate::map::{Door, GeneratedLevel, TileRes};
 use crate::procgen::ProcgenSet;
 use crate::room::{Room, RoomVec};
 use crate::station_code::StationCodes;
+use crate::station_color::StationColors;
+use crate::station_symbol::StationSymbols;
+use crate::station_symbol::SYMBOL_CHARS;
 use crate::rewards::RewardRes;
+use rand::random_range;
 use crate::{
     EndScreenButtons, GameEntity, GameState, MainCamera, PlanetCount, PlanetLevelMarker,
-    StationLevel, FONT_PATH, TILE_SIZE, WIN_H, WIN_W, Z_ENTITIES, Z_FLOOR,
+    StationLevel, FONT_PATH, SYMBOL_FONT_PATH, TILE_SIZE, WIN_H, WIN_W, Z_ENTITIES, Z_FLOOR,
 };
 use crate::player::{Player, aabb_overlap};
 
@@ -69,12 +73,71 @@ enum BossArenaState {
 
 /// Active code-entry session.
 #[derive(Resource)]
-struct CodeEntryState {
+pub struct CodeEntryState {
     door_entity: Entity,
     entered: [u8; 3],
     cursor: usize,
     wrong_timer: Option<Timer>,
 }
+
+/// Color terminal — requires the 3 station color clues to unlock.
+#[derive(Component)]
+pub struct ColorTerminal {
+    pub unlocked: bool,
+}
+
+/// Symbol terminal — requires the 3 station symbol clues to unlock.
+#[derive(Component)]
+pub struct SymbolTerminal {
+    pub unlocked: bool,
+}
+
+/// Frequency Master — requires all 3 signal strengths; opens the boss arena gate.
+#[derive(Component)]
+pub struct FreqMaster {
+    pub unlocked: bool,
+}
+
+/// Signal strengths revealed by solving the 3 sub-puzzles.
+/// [0] = Signal A (CodeDoor), [1] = Signal B (ColorTerminal), [2] = Signal C (SymbolTerminal).
+/// Generated fresh each planet; not persisted.
+#[derive(Resource, Default)]
+pub struct PlanetSignals {
+    pub signals: [Option<u8>; 3],
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum TerminalKind {
+    Color,
+    Symbol,
+    Freq,
+}
+
+/// Active terminal session for Color / Symbol / Freq Master keypads.
+#[derive(Resource)]
+pub struct TerminalSession {
+    terminal_entity: Entity,
+    kind: TerminalKind,
+    entered: [u8; 3],
+    cursor: usize,
+    wrong_timer: Option<Timer>,
+}
+
+/// Marker for the floating prompt near a terminal.
+#[derive(Component)]
+struct TerminalPrompt;
+
+/// Marker for the terminal keypad UI overlay.
+#[derive(Component)]
+struct TerminalUi;
+
+/// Marker for individual value slots inside the terminal keypad.
+#[derive(Component)]
+struct TerminalSlot(usize);
+
+/// Marker for the terminal status text line.
+#[derive(Component)]
+struct TerminalStatusText;
 
 // ── Plugin ───────────────────────────────────────────────────────────────────
 
@@ -127,6 +190,17 @@ impl Plugin for PlanetPlugin {
             .add_systems(
                 Update,
                 (code_door_proximity, update_code_entry_ui)
+                    .run_if(in_state(GameState::Playing))
+                    .run_if(resource_exists::<PlanetLevelMarker>),
+            )
+            .add_systems(
+                OnEnter(GameState::Playing),
+                init_planet_signals
+                    .run_if(resource_exists::<PlanetLevelMarker>),
+            )
+            .add_systems(
+                Update,
+                (terminal_proximity, update_terminal_ui)
                     .run_if(in_state(GameState::Playing))
                     .run_if(resource_exists::<PlanetLevelMarker>),
             )
@@ -759,7 +833,7 @@ fn spawn_code_entry_ui(commands: &mut Commands, asset_server: &AssetServer) {
                 .with_children(|row| {
                     for i in 0..3usize {
                         row.spawn((
-                            Text::new("▶ 0 ◀"),
+                            Text::new("> 0 <"),
                             TextFont { font: font.clone(), font_size: 28.0, ..default() },
                             TextColor(if i == 0 { Color::WHITE } else { Color::srgb(0.5, 0.5, 0.5) }),
                             CodeDigitSlot(i),
@@ -768,7 +842,7 @@ fn spawn_code_entry_ui(commands: &mut Commands, asset_server: &AssetServer) {
                 });
 
             panel.spawn((
-                Text::new("↑↓ change  ←→ move  E=submit  Esc=cancel"),
+                Text::new("W/S change  A/D move  Enter=submit  E=close"),
                 TextFont { font: font.clone(), font_size: 14.0, ..default() },
                 TextColor(Color::srgb(0.6, 0.6, 0.6)),
                 CodeStatusText,
@@ -780,13 +854,14 @@ fn update_code_entry_ui(
     mut commands: Commands,
     entry_state: Option<ResMut<CodeEntryState>>,
     codes: Res<StationCodes>,
+    mut signals: ResMut<PlanetSignals>,
     input: Res<ButtonInput<KeyCode>>,
     bindings: Res<crate::settings::KeyBindings>,
     time: Res<Time>,
     mut digit_q: Query<(&CodeDigitSlot, &mut Text, &mut TextColor)>,
     mut status_q: Query<(&mut Text, &mut TextColor), (With<CodeStatusText>, Without<CodeDigitSlot>)>,
     ui_q: Query<Entity, With<CodeEntryUi>>,
-    mut door_q: Query<&mut Sprite, With<CodeDoor>>,
+    mut door_q: Query<(Entity, &mut Sprite), With<CodeDoor>>,
     asset_server: Res<AssetServer>,
 ) {
     let Some(mut state) = entry_state else { return };
@@ -796,31 +871,31 @@ fn update_code_entry_ui(
         if timer.just_finished() {
             state.wrong_timer = None;
             if let Ok((mut txt, mut col)) = status_q.single_mut() {
-                *txt = Text::new("↑↓ change  ←→ move  E=submit  Esc=cancel");
+                *txt = Text::new("W/S change  A/D move  Enter=submit  E=close");
                 *col = TextColor(Color::srgb(0.6, 0.6, 0.6));
             }
         }
         return;
     }
 
-    if input.just_pressed(KeyCode::Escape) {
+    if input.just_pressed(bindings.interact) {
         close_keypad(&mut commands, &ui_q);
         return;
     }
 
     let cursor_before = state.cursor;
 
-    if input.just_pressed(KeyCode::ArrowLeft) && state.cursor > 0 {
+    if input.just_pressed(bindings.move_left) && state.cursor > 0 {
         state.cursor -= 1;
     }
-    if input.just_pressed(KeyCode::ArrowRight) && state.cursor < 2 {
+    if input.just_pressed(bindings.move_right) && state.cursor < 2 {
         state.cursor += 1;
     }
-    if input.just_pressed(KeyCode::ArrowUp) {
+    if input.just_pressed(bindings.move_up) {
         let idx = state.cursor;
         state.entered[idx] = (state.entered[idx] + 1) % 10;
     }
-    if input.just_pressed(KeyCode::ArrowDown) {
+    if input.just_pressed(bindings.move_down) {
         let idx = state.cursor;
         state.entered[idx] = (state.entered[idx] + 9) % 10;
     }
@@ -830,7 +905,7 @@ fn update_code_entry_ui(
         let i = slot.0;
         let d = state.entered[i];
         if i == state.cursor {
-            *txt = Text::new(format!("▶ {} ◀", d));
+            *txt = Text::new(format!("> {} <", d));
             *col = TextColor(Color::WHITE);
         } else {
             *txt = Text::new(format!("  {}  ", d));
@@ -839,23 +914,36 @@ fn update_code_entry_ui(
         let _ = cursor_changed;
     }
 
-    if input.just_pressed(bindings.interact) {
+    if input.just_pressed(KeyCode::Enter) {
         let correct = codes.codes.iter().zip(state.entered.iter()).all(|(stored, entered)| {
             stored.map_or(false, |d| d == *entered)
         });
 
         if correct {
-            let door_entity = state.door_entity;
-            commands.entity(door_entity).remove::<Collidable>();
-            commands.entity(door_entity).remove::<Collider>();
-            if let Ok(mut door) = commands.get_entity(door_entity) {
-                door.insert(CodeDoor { unlocked: true });
+            let open_door: Handle<Image> = asset_server.load("map/open_door.png");
+            // Unlock every CodeDoor tile (the vault door spans multiple tiles).
+            for (door_entity, _) in door_q.iter() {
+                commands.entity(door_entity).remove::<Collidable>();
+                commands.entity(door_entity).remove::<Collider>();
+                if let Ok(mut e) = commands.get_entity(door_entity) {
+                    e.insert(CodeDoor { unlocked: true });
+                }
+            }
+            for (_, mut sprite) in door_q.iter_mut() {
+                sprite.image = open_door.clone();
             }
 
-            let open_door: Handle<Image> = asset_server.load("map/open_door.png");
-            if let Ok(mut sprite) = door_q.get_mut(door_entity) {
-                sprite.image = open_door;
-            }
+            let sig_a: u8 = random_range(1u8..=5u8);
+            signals.signals[0] = Some(sig_a);
+            let font: Handle<Font> = asset_server.load(FONT_PATH);
+            commands.spawn((
+                Text2d::new(format!("Signal Strength A: {}", sig_a)),
+                TextFont { font, font_size: 20.0, ..default() },
+                TextColor(Color::srgb(0.2, 1.0, 0.5)),
+                Transform::from_translation(Vec3::new(0.0, 60.0, 100.0)),
+                crate::rewards::RewardPopup { timer: Timer::from_seconds(3.0, TimerMode::Once) },
+                GameEntity,
+            ));
 
             close_keypad(&mut commands, &ui_q);
         } else {
@@ -873,4 +961,360 @@ fn close_keypad(commands: &mut Commands, ui_q: &Query<Entity, With<CodeEntryUi>>
         commands.entity(e).despawn();
     }
     commands.remove_resource::<CodeEntryState>();
+}
+
+// ── Planet signals init ───────────────────────────────────────────────────────
+
+fn init_planet_signals(mut commands: Commands) {
+    commands.insert_resource(PlanetSignals::default());
+}
+
+// ── Terminal helpers ──────────────────────────────────────────────────────────
+
+fn terminal_display(kind: TerminalKind, val: u8) -> &'static str {
+    match kind {
+        TerminalKind::Color  => ["RED", "GRN", "BLU", "YLW"][val as usize],
+        TerminalKind::Symbol => SYMBOL_CHARS[val as usize],
+        TerminalKind::Freq   => ["▰▱▱▱▱", "▰▰▱▱▱", "▰▰▰▱▱", "▰▰▰▰▱", "▰▰▰▰▰"][val as usize],
+    }
+}
+
+fn terminal_max(kind: TerminalKind) -> u8 {
+    match kind {
+        TerminalKind::Color  => 3,
+        TerminalKind::Symbol => 5,
+        TerminalKind::Freq   => 4,
+    }
+}
+
+fn terminal_title(kind: TerminalKind) -> &'static str {
+    match kind {
+        TerminalKind::Color  => "COLOR TERMINAL",
+        TerminalKind::Symbol => "SYMBOL TERMINAL",
+        TerminalKind::Freq   => "FREQUENCY MASTER",
+    }
+}
+
+fn terminal_accent(kind: TerminalKind) -> Color {
+    match kind {
+        TerminalKind::Color  => Color::srgb(1.0, 0.5, 0.2),
+        TerminalKind::Symbol => Color::srgb(0.8, 0.3, 1.0),
+        TerminalKind::Freq   => Color::srgb(0.2, 1.0, 0.4),
+    }
+}
+
+// ── Terminal proximity ────────────────────────────────────────────────────────
+
+fn terminal_proximity(
+    mut commands: Commands,
+    player_q: Query<&Transform, With<Player>>,
+    color_q: Query<(Entity, &Transform, &ColorTerminal)>,
+    symbol_q: Query<(Entity, &Transform, &SymbolTerminal)>,
+    freq_q: Query<(Entity, &Transform, &FreqMaster)>,
+    prompt_q: Query<Entity, With<TerminalPrompt>>,
+    session: Option<Res<TerminalSession>>,
+    code_session: Option<Res<CodeEntryState>>,
+    signals: Res<PlanetSignals>,
+    input: Res<ButtonInput<KeyCode>>,
+    bindings: Res<crate::settings::KeyBindings>,
+    asset_server: Res<AssetServer>,
+) {
+    if session.is_some() || code_session.is_some() { return; }
+
+    let Ok(player_tf) = player_q.single() else { return };
+    let pp = player_tf.translation;
+    let interact_half = Vec2::splat(TILE_SIZE * 2.5);
+    let term_half = Vec2::splat(TILE_SIZE * 0.5);
+
+    // Collect all terminal candidates: (entity, pos, kind, locked)
+    let mut near: Option<(Entity, Vec3, TerminalKind)> = None;
+
+    for (entity, tf, t) in &color_q {
+        if t.unlocked { continue; }
+        if aabb_overlap(pp.x, pp.y, interact_half, tf.translation.x, tf.translation.y, term_half) {
+            near = Some((entity, tf.translation, TerminalKind::Color));
+            break;
+        }
+    }
+    if near.is_none() {
+        for (entity, tf, t) in &symbol_q {
+            if t.unlocked { continue; }
+            if aabb_overlap(pp.x, pp.y, interact_half, tf.translation.x, tf.translation.y, term_half) {
+                near = Some((entity, tf.translation, TerminalKind::Symbol));
+                break;
+            }
+        }
+    }
+    if near.is_none() {
+        for (entity, tf, t) in &freq_q {
+            if t.unlocked { continue; }
+            if aabb_overlap(pp.x, pp.y, interact_half, tf.translation.x, tf.translation.y, term_half) {
+                near = Some((entity, tf.translation, TerminalKind::Freq));
+                break;
+            }
+        }
+    }
+
+    for e in &prompt_q { commands.entity(e).despawn(); }
+
+    let Some((terminal_entity, terminal_pos, kind)) = near else { return };
+    let font: Handle<Font> = asset_server.load(FONT_PATH);
+
+    // Freq master is locked until all 3 signals are revealed.
+    let freq_locked = kind == TerminalKind::Freq && signals.signals.iter().any(|s| s.is_none());
+
+    let prompt_text = if freq_locked {
+        "[LOCKED] Need all 3 signals".to_string()
+    } else {
+        "[E] Interact".to_string()
+    };
+    let prompt_color = if freq_locked {
+        Color::srgb(0.8, 0.2, 0.2)
+    } else {
+        terminal_accent(kind)
+    };
+
+    commands.spawn((
+        Text2d::new(prompt_text),
+        TextFont { font, font_size: 18.0, ..default() },
+        TextColor(prompt_color),
+        Transform::from_translation(terminal_pos + Vec3::new(0.0, TILE_SIZE * 1.5, 10.0)),
+        TerminalPrompt,
+        GameEntity,
+    ));
+
+    if !freq_locked && input.just_pressed(bindings.interact) {
+        commands.insert_resource(TerminalSession {
+            terminal_entity,
+            kind,
+            entered: [0; 3],
+            cursor: 0,
+            wrong_timer: None,
+        });
+        spawn_terminal_ui(&mut commands, &asset_server, kind);
+    }
+}
+
+fn spawn_terminal_ui(commands: &mut Commands, asset_server: &AssetServer, kind: TerminalKind) {
+    let font: Handle<Font> = asset_server.load(FONT_PATH);
+    let slot_font: Handle<Font> = match kind {
+        TerminalKind::Symbol | TerminalKind::Freq => asset_server.load(SYMBOL_FONT_PATH),
+        _ => font.clone(),
+    };
+    let accent = terminal_accent(kind);
+
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Px(360.0),
+                height: Val::Auto,
+                left: Val::Percent(50.0),
+                top: Val::Percent(40.0),
+                margin: UiRect { left: Val::Px(-180.0), ..default() },
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(12.0),
+                padding: UiRect::all(Val::Px(20.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.03, 0.08, 0.96)),
+            BorderColor(accent),
+            BorderRadius::all(Val::Px(8.0)),
+            ZIndex(30),
+            TerminalUi,
+        ))
+        .with_children(|panel| {
+            panel.spawn((
+                Text::new(terminal_title(kind)),
+                TextFont { font: font.clone(), font_size: 22.0, ..default() },
+                TextColor(accent),
+            ));
+
+            panel
+                .spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    column_gap: Val::Px(12.0),
+                    align_items: AlignItems::Center,
+                    ..default()
+                })
+                .with_children(|row| {
+                    for i in 0..3usize {
+                        row.spawn((
+                            Text::new(format!("> {} <", terminal_display(kind, 0))),
+                            TextFont { font: slot_font.clone(), font_size: 24.0, ..default() },
+                            TextColor(if i == 0 { Color::WHITE } else { Color::srgb(0.5, 0.5, 0.5) }),
+                            TerminalSlot(i),
+                        ));
+                    }
+                });
+
+            panel.spawn((
+                Text::new("W/S change  A/D move  Enter=submit  E=close"),
+                TextFont { font: font.clone(), font_size: 14.0, ..default() },
+                TextColor(Color::srgb(0.6, 0.6, 0.6)),
+                TerminalStatusText,
+            ));
+        });
+}
+
+// ── Terminal keypad update ────────────────────────────────────────────────────
+
+fn update_terminal_ui(
+    mut commands: Commands,
+    session: Option<ResMut<TerminalSession>>,
+    colors: Res<StationColors>,
+    symbols: Res<StationSymbols>,
+    mut signals: ResMut<PlanetSignals>,
+    input: Res<ButtonInput<KeyCode>>,
+    bindings: Res<crate::settings::KeyBindings>,
+    time: Res<Time>,
+    mut slot_q: Query<(&TerminalSlot, &mut Text, &mut TextColor)>,
+    mut status_q: Query<(&mut Text, &mut TextColor), (With<TerminalStatusText>, Without<TerminalSlot>)>,
+    ui_q: Query<Entity, With<TerminalUi>>,
+    mut color_q: Query<&mut Sprite, (With<ColorTerminal>, Without<SymbolTerminal>, Without<FreqMaster>)>,
+    mut symbol_q: Query<&mut Sprite, (With<SymbolTerminal>, Without<ColorTerminal>, Without<FreqMaster>)>,
+    mut freq_q: Query<&mut Sprite, (With<FreqMaster>, Without<ColorTerminal>, Without<SymbolTerminal>)>,
+    asset_server: Res<AssetServer>,
+) {
+    let Some(mut state) = session else { return };
+
+    if let Some(ref mut timer) = state.wrong_timer {
+        timer.tick(time.delta());
+        if timer.just_finished() {
+            state.wrong_timer = None;
+            if let Ok((mut txt, mut col)) = status_q.single_mut() {
+                *txt = Text::new("W/S change  A/D move  Enter=submit  E=close");
+                *col = TextColor(Color::srgb(0.6, 0.6, 0.6));
+            }
+        }
+        return;
+    }
+
+    if input.just_pressed(bindings.interact) {
+        close_terminal(&mut commands, &ui_q);
+        return;
+    }
+
+    let kind = state.kind;
+    let max_val = terminal_max(kind);
+
+    if input.just_pressed(bindings.move_left) && state.cursor > 0 {
+        state.cursor -= 1;
+    }
+    if input.just_pressed(bindings.move_right) && state.cursor < 2 {
+        state.cursor += 1;
+    }
+    if input.just_pressed(bindings.move_up) {
+        let idx = state.cursor;
+        state.entered[idx] = (state.entered[idx] + 1) % (max_val + 1);
+    }
+    if input.just_pressed(bindings.move_down) {
+        let idx = state.cursor;
+        state.entered[idx] = (state.entered[idx] + max_val) % (max_val + 1);
+    }
+
+    for (slot, mut txt, mut col) in &mut slot_q {
+        let i = slot.0;
+        let val = state.entered[i];
+        if i == state.cursor {
+            *txt = Text::new(format!("> {} <", terminal_display(kind, val)));
+            *col = TextColor(Color::WHITE);
+        } else {
+            *txt = Text::new(format!("  {}  ", terminal_display(kind, val)));
+            *col = TextColor(Color::srgb(0.5, 0.5, 0.5));
+        }
+    }
+
+    if input.just_pressed(KeyCode::Enter) {
+        let correct = match kind {
+            TerminalKind::Color  => colors.colors.iter().zip(state.entered.iter())
+                .all(|(s, e)| s.map_or(false, |v| v == *e)),
+            TerminalKind::Symbol => symbols.symbols.iter().zip(state.entered.iter())
+                .all(|(s, e)| s.map_or(false, |v| v == *e)),
+            TerminalKind::Freq   => signals.signals.iter().zip(state.entered.iter())
+                .all(|(s, e)| s.map_or(false, |v| v == *e + 1)), // entered 0-4, signals 1-5
+        };
+
+        if correct {
+            let terminal_entity = state.terminal_entity;
+            let font: Handle<Font> = asset_server.load(FONT_PATH);
+
+            match kind {
+                TerminalKind::Color => {
+                    let sig = random_range(1u8..=5u8);
+                    signals.signals[1] = Some(sig);
+                    if let Ok(mut sprite) = color_q.get_mut(terminal_entity) {
+                        sprite.color = Color::srgb(0.3, 0.3, 0.3);
+                    }
+                    commands.entity(terminal_entity).remove::<Collidable>();
+                    commands.entity(terminal_entity).remove::<Collider>();
+                    if let Ok(mut e) = commands.get_entity(terminal_entity) {
+                        e.insert(ColorTerminal { unlocked: true });
+                    }
+                    commands.spawn((
+                        Text2d::new(format!("Signal Strength B: {}", sig)),
+                        TextFont { font, font_size: 20.0, ..default() },
+                        TextColor(Color::srgb(1.0, 0.5, 0.2)),
+                        Transform::from_translation(Vec3::new(0.0, 60.0, 100.0)),
+                        crate::rewards::RewardPopup { timer: Timer::from_seconds(3.0, TimerMode::Once) },
+                        GameEntity,
+                    ));
+                }
+                TerminalKind::Symbol => {
+                    let sig = random_range(1u8..=5u8);
+                    signals.signals[2] = Some(sig);
+                    if let Ok(mut sprite) = symbol_q.get_mut(terminal_entity) {
+                        sprite.color = Color::srgb(0.3, 0.3, 0.3);
+                    }
+                    commands.entity(terminal_entity).remove::<Collidable>();
+                    commands.entity(terminal_entity).remove::<Collider>();
+                    if let Ok(mut e) = commands.get_entity(terminal_entity) {
+                        e.insert(SymbolTerminal { unlocked: true });
+                    }
+                    commands.spawn((
+                        Text2d::new(format!("Signal Strength C: {}", sig)),
+                        TextFont { font, font_size: 20.0, ..default() },
+                        TextColor(Color::srgb(0.8, 0.3, 1.0)),
+                        Transform::from_translation(Vec3::new(0.0, 60.0, 100.0)),
+                        crate::rewards::RewardPopup { timer: Timer::from_seconds(3.0, TimerMode::Once) },
+                        GameEntity,
+                    ));
+                }
+                TerminalKind::Freq => {
+                    if let Ok(mut sprite) = freq_q.get_mut(terminal_entity) {
+                        sprite.color = Color::srgb(0.3, 0.3, 0.3);
+                    }
+                    commands.entity(terminal_entity).remove::<Collidable>();
+                    commands.entity(terminal_entity).remove::<Collider>();
+                    if let Ok(mut e) = commands.get_entity(terminal_entity) {
+                        e.insert(FreqMaster { unlocked: true });
+                    }
+                    commands.spawn((
+                        Text2d::new("Boss Arena Unlocked!"),
+                        TextFont { font, font_size: 24.0, ..default() },
+                        TextColor(Color::srgb(0.2, 1.0, 0.4)),
+                        Transform::from_translation(Vec3::new(0.0, 60.0, 100.0)),
+                        crate::rewards::RewardPopup { timer: Timer::from_seconds(3.0, TimerMode::Once) },
+                        GameEntity,
+                    ));
+                }
+            }
+
+            close_terminal(&mut commands, &ui_q);
+        } else {
+            if let Ok((mut txt, mut col)) = status_q.single_mut() {
+                *txt = Text::new("✗  INCORRECT  ✗");
+                *col = TextColor(Color::srgb(1.0, 0.2, 0.2));
+            }
+            state.wrong_timer = Some(Timer::from_seconds(1.5, TimerMode::Once));
+        }
+    }
+}
+
+fn close_terminal(commands: &mut Commands, ui_q: &Query<Entity, With<TerminalUi>>) {
+    for e in ui_q.iter() {
+        commands.entity(e).despawn();
+    }
+    commands.remove_resource::<TerminalSession>();
 }
