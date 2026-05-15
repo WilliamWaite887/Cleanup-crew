@@ -794,64 +794,54 @@ fn player_deflects_tables(
 
 fn apply_breach_force_to_player(
     time: Res<Time>,
+    rooms: Res<crate::room::RoomVec>,
     grid_query: Query<&crate::fluiddynamics::FluidGrid>,
     mut player_query: Query<(&Transform, &mut Velocity, &PulledByFluid), With<Player>>,
 ) {
-    let Ok(grid) = grid_query.single() else {
-        return;
-    };
-    
-    if grid.breaches.is_empty() {
-        return;
-    }
-    
+    let Ok(grid) = grid_query.single() else { return; };
+    if grid.breaches.is_empty() { return; }
+
     let cell_size = crate::TILE_SIZE;
     let grid_origin_x = -(grid.width as f32 * cell_size) / 2.0;
     let grid_origin_y = -(grid.height as f32 * cell_size) / 2.0;
-    
-    for (transform, mut velocity, pulled) in &mut player_query {
-        let world_pos = transform.translation.truncate();
-        
-        let grid_x = ((world_pos.x - grid_origin_x) / cell_size) as usize;
-        let grid_y = ((world_pos.y - grid_origin_y) / cell_size) as usize;
-        
-        if grid_x >= grid.width || grid_y >= grid.height {
-            continue;
-        }
-        
-        // checks the macroscopic variables (velocity and pressure) at player loc
-        let (rho, fluid_vx, fluid_vy) = grid.compute_macroscopic(grid_x, grid_y);
-        
-        let normal_density = 1.0;
-        let pressure_diff = normal_density - rho;
-        
-        // the threshold you have to get over for the vaccuum forces to actually affect the player
-        let pressure_threshold = 0.15;
-        
-        
-        let scaled_pressure_diff = (pressure_diff - pressure_threshold).max(0.0);
-        
-        let fluid_velocity = Vec2::new(fluid_vx, fluid_vy);
 
-        
-        // the strength of the forces that you can tweak to get more visible results
-         let pressure_force_strength = 500000.0;
-        let velocity_force_strength = 300000.0;
-        
-        let pressure_force = fluid_velocity.normalize_or_zero()  * scaled_pressure_diff  * pressure_force_strength;
-        let velocity_force = fluid_velocity * velocity_force_strength;
-        
-        let total_force = pressure_force + velocity_force;
-        
-        let acceleration = total_force / pulled.mass;
-        let deltat = time.delta_secs();
-        velocity.0 += acceleration * deltat;
+    let Ok((transform, mut velocity, pulled)) = player_query.single_mut() else { return; };
+    let world_pos = transform.translation.truncate();
 
-        // Cap speed so the player can't tunnel through walls from breach suction.
-        // Anything above ~one tile per frame (32 / 0.016s ≈ 2000) causes tunneling;
-        // 900 is fast enough to feel pulled while staying safely below that threshold.
-        velocity.0 = velocity.0.clamp_length_max(900.0);
+    // Only apply suction from breaches in the player's current room.
+    let Some(room) = rooms.0.iter().find(|r| r.bounds_check(world_pos)) else { return; };
+    if room.breaches.is_empty() { return; }
+
+    // Geometric directional suction: inverse-distance-squared with softening.
+    // K is large enough to overcome the 0.80 drag: at 100 px suction adds ~81 px/s per frame
+    // vs. drag removing ~40 px/s per frame at 200 px/s, so suction clearly wins up close.
+    const K: f32 = 4_000_000_000.0;
+    const SOFTENING: f32 = 80.0;
+
+    let mut total_force = Vec2::ZERO;
+    for &breach_pos in &room.breaches {
+        let to_breach = breach_pos - world_pos;
+        let dist = to_breach.length();
+        if dist < 1.0 { continue; }
+        let mag = K / (dist * dist + SOFTENING * SOFTENING);
+        total_force += to_breach.normalize() * mag;
     }
+
+    // Secondary: LBM fluid velocity adds directional texture from the simulation.
+    // Raise the multiplier to 150_000 once the body-force injection is confirmed stable.
+    let grid_x = ((world_pos.x - grid_origin_x) / cell_size)
+        .clamp(0.0, (grid.width - 1) as f32) as usize;
+    let grid_y = ((world_pos.y - grid_origin_y) / cell_size)
+        .clamp(0.0, (grid.height - 1) as f32) as usize;
+    let (_, fluid_vx, fluid_vy) = grid.compute_macroscopic(grid_x, grid_y);
+    total_force += Vec2::new(fluid_vx, fluid_vy) * 50_000.0;
+
+    velocity.0 += (total_force / pulled.mass) * time.delta_secs();
+
+    // Cap speed so the player can't tunnel through walls from breach suction.
+    // Anything above ~one tile per frame (32 / 0.016s ≈ 2000) causes tunneling;
+    // 900 is fast enough to feel pulled while staying safely below that threshold.
+    velocity.0 = velocity.0.clamp_length_max(900.0);
 }
 
 // Prevents player from being inside walls (e.g., when pushed by tables)

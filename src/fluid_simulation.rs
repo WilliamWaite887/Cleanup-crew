@@ -312,38 +312,55 @@ fn streaming_step(mut query: Query<&mut FluidGrid>) {
 }
 
 fn apply_breach_forces(mut query: Query<&mut FluidGrid>) {
+    const BREACH_RADIUS: isize = 5;
+    const DRAIN_STRENGTH: f32 = 0.1;
+    // Body force magnitude in lattice units — keeps macroscopic velocity ~0.001,
+    // well below the 0.1 instability threshold for OMEGA = 1/0.55.
+    const BASE_BODY_FORCE: f32 = 0.0008;
+
     for mut grid in &mut query {
-        //collect breach positions first
         let breach_positions: Vec<(usize, usize)> = grid.breaches.clone();
-        //loop through each breach position
         for &(bx, by) in &breach_positions {
-            let breach_radius = 5;
-            //loop through all cells in a square around the breach
-            for dy in -(breach_radius as isize)..=(breach_radius as isize) {
-                for dx in -(breach_radius as isize)..=(breach_radius as isize) {
-                    let x = (bx as isize + dx) as isize;
-                    let y = (by as isize + dy) as isize;
-                    //check if this cell is within grid bounds
+            for dy in -BREACH_RADIUS..=BREACH_RADIUS {
+                for dx in -BREACH_RADIUS..=BREACH_RADIUS {
+                    let x = bx as isize + dx;
+                    let y = by as isize + dy;
                     if x < 0 || y < 0 || x >= grid.width as isize || y >= grid.height as isize {
                         continue;
                     }
                     let idx = grid.get_index(x as usize, y as usize);
-                    //calculate distance squared from breach center
+                    if grid.obstacles[idx] { continue; }
+
                     let dist_sq = (dx * dx + dy * dy) as f32;
-                    //only affect cells within circular radius
-                    if dist_sq < (breach_radius * breach_radius) as f32 {
-                        //vacuum strength decreases with distance from breach
-                        let vacuum_strength = 1.0 - (dist_sq / (breach_radius * breach_radius) as f32);
-                        //reduce air density in all directions
+                    let radius_sq = (BREACH_RADIUS * BREACH_RADIUS) as f32;
+                    if dist_sq >= radius_sq { continue; }
+
+                    // Density drain: vacuum strength decreases with distance from breach.
+                    let vacuum_strength = 1.0 - (dist_sq / radius_sq);
+                    for i in 0..9 {
+                        grid.distribution[idx][i] *= 1.0 - (vacuum_strength * DRAIN_STRENGTH);
+                    }
+
+                    // Directional body force: steer flow toward the breach (Guo first-order).
+                    let dist = dist_sq.sqrt();
+                    if dist >= 0.5 {
+                        // Unit vector pointing from this cell toward the breach.
+                        let dir_x = -(dx as f32) / dist;
+                        let dir_y = -(dy as f32) / dist;
+                        let falloff = 1.0 - (dist / BREACH_RADIUS as f32);
+                        let rho: f32 = grid.distribution[idx].iter().sum::<f32>().max(0.01);
+                        let fx = dir_x * BASE_BODY_FORCE * falloff * rho;
+                        let fy = dir_y * BASE_BODY_FORCE * falloff * rho;
                         for i in 0..9 {
-                            grid.distribution[idx][i] *= 1.0 - (vacuum_strength * 0.1);
+                            grid.distribution[idx][i] +=
+                                WEIGHTS[i] * 3.0 * (C_X[i] * fx + C_Y[i] * fy);
+                            grid.distribution[idx][i] = grid.distribution[idx][i].max(0.0);
                         }
                     }
                 }
             }
         }
     }
-    
 }
 
 // apply suction forces ONLY to objects inside the same room as the breach

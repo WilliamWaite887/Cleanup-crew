@@ -635,28 +635,25 @@ pub fn apply_breach_forces_to_entities(
     time: Res<Time>,
     rooms: Res<RoomVec>,
     mut tables: Query<(&Transform, &mut crate::enemies::Velocity, &crate::fluiddynamics::PulledByFluid), With<crate::table::Table>>,
-    mut player: Query<(&Transform, &mut crate::bullet::Velocity, &crate::fluiddynamics::PulledByFluid), (With<crate::player::Player>, Without<crate::table::Table>)>,  // Changed to bullet::Velocity
+    player_transform: Query<&Transform, (With<crate::player::Player>, Without<crate::table::Table>)>,
     mut enemies: Query<(&Transform, &mut crate::enemies::Velocity, &crate::fluiddynamics::PulledByFluid), (With<crate::enemies::Enemy>, Without<crate::player::Player>, Without<crate::table::Table>)>,
 ) {
-    // Determine which room the player is in
-    let player_room = if let Ok((player_transform, _, _)) = player.single() {
-        let player_pos = player_transform.translation.truncate();
+    // Determine which room the player is in (read-only — player suction is handled
+    // by apply_breach_force_to_player in player.rs with better distance-based physics).
+    let player_room = if let Ok(tf) = player_transform.single() {
+        let player_pos = tf.translation.truncate();
         rooms.0.iter().find(|room| room.bounds_check(player_pos))
     } else {
         None
     };
 
     let Some(room) = player_room else {
-        //println!("Player is not inside any room. Physics deactivated for all rooms.");
         return;
     };
 
     if room.breaches.is_empty() {
-        //println!("Player entered room, but it has no breaches. Physics deactivated for this room.");
         return;
     }
-
-    //println!("Player entered room. Physics for this room is activated. Other rooms are deactivated.");
 
     // Helper closure to apply suction toward the room's breaches
     let apply_suction = |world_pos: Vec2, mass: f32, velocity: &mut Vec2| {
@@ -665,23 +662,17 @@ pub fn apply_breach_forces_to_entities(
             let to_breach = breach_world_pos - world_pos;
             let distance = to_breach.length();
             if distance > 1.0 {
-                total_force += to_breach.normalize() * 25000.0; // force magnitude
+                total_force += to_breach.normalize() * 25000.0;
             }
         }
         let acceleration = total_force / mass;
         *velocity += acceleration * time.delta().as_secs_f32();
 
-        // Clamp maximum speed
         let max_velocity = 200.0;
         if velocity.length() > max_velocity {
             *velocity = velocity.normalize() * max_velocity;
         }
     };
-
-    // Apply only to player in the room (always in that room)
-    if let Ok((transform, mut velocity, pulled_by_fluid)) = player.single_mut() {
-        apply_suction(transform.translation.truncate(), pulled_by_fluid.mass, &mut **velocity);
-    }
 
     // Apply only to enemies in the room
     for (transform, mut velocity, pulled_by_fluid) in enemies.iter_mut() {
