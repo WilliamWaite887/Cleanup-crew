@@ -23,14 +23,6 @@ pub struct CodeFragment {
     pub digit: u8,
 }
 
-/// Marker for the three HUD digit slots.
-#[derive(Component)]
-pub struct CodeHudSlot(pub usize);
-
-/// Root node of the code HUD row.
-#[derive(Component)]
-pub struct CodeHudRoot;
-
 #[derive(Resource)]
 pub struct CodeFragmentRes {
     pub img: Handle<Image>,
@@ -51,11 +43,11 @@ impl Plugin for StationCodePlugin {
             )
             .add_systems(
                 OnEnter(GameState::Playing),
-                (spawn_code_fragment, setup_code_hud),
+                spawn_code_fragment,
             )
             .add_systems(
                 Update,
-                (collect_code_fragment, update_code_hud)
+                collect_code_fragment
                     .run_if(in_state(GameState::Playing)),
             );
     }
@@ -160,61 +152,3 @@ fn collect_code_fragment(
     }
 }
 
-/// Spawn a small HUD row showing the 3 code digit slots.
-fn setup_code_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let font: Handle<Font> = asset_server.load(FONT_PATH);
-
-    commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                bottom: Val::Px(76.0),
-                right: Val::Px(20.0),
-                flex_direction: FlexDirection::Row,
-                column_gap: Val::Px(4.0),
-                align_items: AlignItems::Center,
-                padding: UiRect::all(Val::Px(4.0)),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
-            BorderRadius::all(Val::Px(4.0)),
-            ZIndex(10),
-            CodeHudRoot,
-            GameEntity,
-        ))
-        .with_children(|row| {
-            row.spawn((
-                Text::new("CODE "),
-                TextFont { font: font.clone(), font_size: 16.0, ..default() },
-                TextColor(Color::srgb(0.4, 0.8, 1.0)),
-            ));
-            for i in 0..3usize {
-                row.spawn((
-                    Text::new("[ ? ]"),
-                    TextFont { font: font.clone(), font_size: 16.0, ..default() },
-                    TextColor(Color::srgb(0.5, 0.5, 0.5)),
-                    CodeHudSlot(i),
-                ));
-            }
-        });
-}
-
-/// Keep HUD slots in sync with collected digits.
-fn update_code_hud(
-    codes: Res<StationCodes>,
-    mut slot_q: Query<(&CodeHudSlot, &mut Text, &mut TextColor)>,
-) {
-    if !codes.is_changed() { return; }
-    for (slot, mut text, mut color) in &mut slot_q {
-        match codes.codes[slot.0] {
-            Some(d) => {
-                *text = Text::new(format!("[ {} ]", d));
-                *color = TextColor(Color::srgb(0.2, 1.0, 1.0));
-            }
-            None => {
-                *text = Text::new("[ ? ]");
-                *color = TextColor(Color::srgb(0.5, 0.5, 0.5));
-            }
-        }
-    }
-}
