@@ -105,8 +105,8 @@ fn spawn_code_fragment(
         return;
     };
 
-    let center = (target_room.top_left_corner + target_room.bot_right_corner) * 0.5;
-    let pos = Vec3::new(center.x + TILE_SIZE, center.y + TILE_SIZE, Z_ENTITIES);
+    let Some(floor) = target_room.random_floor_tile() else { return; };
+    let pos = Vec3::new(floor.x, floor.y, Z_ENTITIES);
 
     let mut sprite = Sprite::from_image(res.img.clone());
     // Cyan tint to distinguish it from the regular (white) key pickup.

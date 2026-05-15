@@ -62,6 +62,21 @@ impl Room{
         }
     }
 
+    /// Returns the world position of a random floor (`'#'`) tile in this room.
+    pub fn random_floor_tile(&self) -> Option<Vec2> {
+        let mut floors: Vec<Vec2> = Vec::new();
+        for (ly, row) in self.layout.iter().enumerate() {
+            for (lx, ch) in row.as_bytes().iter().enumerate() {
+                if *ch as char == '#' {
+                    let world_x = self.top_left_corner.x + lx as f32 * TILE_SIZE;
+                    let world_y = self.top_left_corner.y - ly as f32 * TILE_SIZE;
+                    floors.push(Vec2::new(world_x, world_y));
+                }
+            }
+        }
+        floors.choose(&mut rand::rng()).copied()
+    }
+
     pub fn bounds_check(&self, pos:Vec2) -> bool{
         self.top_left_corner.x <= pos.x && self.top_left_corner.y >= pos.y && self.bot_right_corner.x >= pos.x && self.bot_right_corner.y <= pos.y
     }
