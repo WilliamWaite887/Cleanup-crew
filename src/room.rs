@@ -74,7 +74,8 @@ impl Room{
                 }
             }
         }
-        floors.choose(&mut rand::rng()).copied()
+        if floors.is_empty() { return None; }
+        Some(floors[rand::random_range(0..floors.len())])
     }
 
     pub fn bounds_check(&self, pos:Vec2) -> bool{
