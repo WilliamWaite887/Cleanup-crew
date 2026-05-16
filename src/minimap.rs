@@ -49,6 +49,10 @@ enum InventoryBuffLine { AtkSpeed, Damage, Piercing }
 #[derive(Component)]
 enum InventoryClueRow { Code, Color, Symbol, Signal }
 
+/// Marker for the key status row in the inventory panel.
+#[derive(Component)]
+struct InventoryKeyRow;
+
 // Resources
 
 #[derive(Resource, Default)]
@@ -356,6 +360,14 @@ fn setup_minimap(
                     TextColor(Color::srgb(0.2, 1.0, 0.4)),
                     InventoryClueRow::Signal,
                 ));
+
+                inv_section_header(inv, &font, "KEY");
+                inv.spawn((
+                    Text::new(""),
+                    TextFont { font: font.clone(), font_size: 15.0, ..default() },
+                    TextColor(Color::srgb(1.0, 0.85, 0.2)),
+                    InventoryKeyRow,
+                ));
             });
         });
 }
@@ -413,9 +425,11 @@ fn update_inventory_panel(
     colors: Res<StationColors>,
     symbols: Res<StationSymbols>,
     signals: Option<Res<PlanetSignals>>,
-    mut weapon_lines: Query<(&InventoryWeaponLine, &mut Text, &mut TextColor), (Without<InventoryBuffLine>, Without<InventoryClueRow>)>,
-    mut buff_lines: Query<(&InventoryBuffLine, &mut Text, &mut TextColor), (Without<InventoryWeaponLine>, Without<InventoryClueRow>)>,
-    mut clue_rows: Query<(&InventoryClueRow, &mut Text, &mut TextColor), (Without<InventoryBuffLine>, Without<InventoryWeaponLine>)>,
+    key_state: Option<Res<crate::key_chest::LevelKeyState>>,
+    mut weapon_lines: Query<(&InventoryWeaponLine, &mut Text, &mut TextColor), (Without<InventoryBuffLine>, Without<InventoryClueRow>, Without<InventoryKeyRow>)>,
+    mut buff_lines: Query<(&InventoryBuffLine, &mut Text, &mut TextColor), (Without<InventoryWeaponLine>, Without<InventoryClueRow>, Without<InventoryKeyRow>)>,
+    mut clue_rows: Query<(&InventoryClueRow, &mut Text, &mut TextColor), (Without<InventoryBuffLine>, Without<InventoryWeaponLine>, Without<InventoryKeyRow>)>,
+    mut key_rows: Query<(&mut Text, &mut TextColor), (With<InventoryKeyRow>, Without<InventoryBuffLine>, Without<InventoryWeaponLine>, Without<InventoryClueRow>)>,
 ) {
     let Ok((inv, buffs)) = player_q.single() else { return };
 
@@ -478,6 +492,16 @@ fn update_inventory_panel(
                 }
             }
         }
+    }
+
+    if let Ok((mut text, mut color)) = key_rows.single_mut() {
+        let has_key = key_state.map_or(false, |k| k.has_key);
+        *text = Text::new(if has_key { "  KEY   [found]" } else { "  KEY   —" });
+        *color = TextColor(if has_key {
+            Color::srgb(1.0, 0.85, 0.2)
+        } else {
+            Color::srgb(0.4, 0.4, 0.4)
+        });
     }
 }
 
