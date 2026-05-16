@@ -449,6 +449,7 @@ fn move_enemy(
     >,
     wall_grid: Res<crate::map::WallGrid>,
     grid_query: Query<&crate::fluiddynamics::FluidGrid>,
+    door_query: Query<(&Transform, &Collider), (With<Collidable>, Without<crate::map::WallTile>, Without<crate::table::Table>, Without<Enemy>)>,
 ) {
     let grid_has_breach = if let Ok(grid) = grid_query.single() {
         !grid.breaches.is_empty()
@@ -505,6 +506,17 @@ fn move_enemy(
                     enemy_velocity.velocity.x = 0.0;
                 }
             }
+            for (dt, dc) in &door_query {
+                let (cx, cy) = (dt.translation.x, dt.translation.y);
+                if crate::player::aabb_overlap(nx, pos.y, enemy_half, cx, cy, dc.half_extents) {
+                    nx = if change.x > 0.0 {
+                        cx - (enemy_half.x + dc.half_extents.x)
+                    } else {
+                        cx + (enemy_half.x + dc.half_extents.x)
+                    };
+                    enemy_velocity.velocity.x = 0.0;
+                }
+            }
             pos.x = nx;
         }
 
@@ -516,6 +528,17 @@ fn move_enemy(
                         wall_pos.y - (enemy_half.y + wall_half.y)
                     } else {
                         wall_pos.y + (enemy_half.y + wall_half.y)
+                    };
+                    enemy_velocity.velocity.y = 0.0;
+                }
+            }
+            for (dt, dc) in &door_query {
+                let (cx, cy) = (dt.translation.x, dt.translation.y);
+                if crate::player::aabb_overlap(pos.x, ny, enemy_half, cx, cy, dc.half_extents) {
+                    ny = if change.y > 0.0 {
+                        cy - (enemy_half.y + dc.half_extents.y)
+                    } else {
+                        cy + (enemy_half.y + dc.half_extents.y)
                     };
                     enemy_velocity.velocity.y = 0.0;
                 }
@@ -541,6 +564,7 @@ fn move_reaper_freely(
 fn wall_correction_for_enemies(
     mut enemy_query: Query<&mut Transform, (With<Enemy>, With<ActiveEnemy>, Without<Reaper>)>,
     wall_grid: Res<crate::map::WallGrid>,
+    door_query: Query<(&Transform, &Collider), (With<Collidable>, Without<crate::map::WallTile>, Without<crate::table::Table>, Without<Enemy>)>,
 ) {
     let enemy_half = Vec2::splat(ENEMY_SIZE * 0.5);
 
@@ -557,22 +581,37 @@ fn wall_correction_for_enemies(
                 }
             }
         }
+        for (dt, dc) in &door_query {
+            let dp = dt.translation.truncate();
+            if crate::player::aabb_overlap(pos.x, pos.y, enemy_half, dp.x, dp.y, dc.half_extents) {
+                let overlap_x = (enemy_half.x + dc.half_extents.x) - (pos.x - dp.x).abs();
+                let overlap_y = (enemy_half.y + dc.half_extents.y) - (pos.y - dp.y).abs();
+                if overlap_x < overlap_y {
+                    pos.x += if pos.x > dp.x { overlap_x } else { -overlap_x };
+                } else {
+                    pos.y += if pos.y > dp.y { overlap_y } else { -overlap_y };
+                }
+            }
+        }
         enemy_tf.translation.x = pos.x;
         enemy_tf.translation.y = pos.y;
     }
 }
 
+const ENEMY_WALK_TABLE_PUSH: f32 = 0.45;
+
 fn enemies_collide_with_tables(
     mut enemy_query: Query<(&mut Transform, &mut Velocity), (With<Enemy>, With<ActiveEnemy>, Without<Reaper>)>,
-    table_query: Query<(&Transform, &Collider, &table::TableRoom), (With<table::Table>, With<Collidable>, Without<Enemy>)>,
+    mut table_query: Query<(&mut Transform, &Collider, &mut Velocity, &table::TableRoom), (With<table::Table>, With<Collidable>, Without<Enemy>)>,
     active_room: Res<table::ActiveRoom>,
+    wall_grid: Res<crate::map::WallGrid>,
 ) {
     let Some(active) = active_room.0 else { return; };
     let enemy_half = Vec2::splat(ENEMY_SIZE * 0.5);
 
-    for (mut enemy_tf, mut enemy_vel) in &mut enemy_query {
+    for (mut enemy_tf, _enemy_vel) in &mut enemy_query {
         let ep = enemy_tf.translation.truncate();
-        for (table_tf, table_col, room) in &table_query {
+        for (mut table_tf, table_col, mut table_vel, room) in &mut table_query {
             if room.0 != active { continue; }
             let tp = table_tf.translation.truncate();
             let th = table_col.half_extents;
@@ -581,26 +620,30 @@ fn enemies_collide_with_tables(
                 continue;
             }
 
-            let overlap_x = (enemy_half.x + th.x) - (ep.x - tp.x).abs();
-            let overlap_y = (enemy_half.y + th.y) - (ep.y - tp.y).abs();
+            let dx = tp.x - ep.x;
+            let dy = tp.y - ep.y;
+            let overlap_x = (enemy_half.x + th.x) - dx.abs();
+            let overlap_y = (enemy_half.y + th.y) - dy.abs();
 
             if overlap_x < overlap_y {
-                if ep.x > tp.x {
-                    enemy_tf.translation.x += overlap_x;
-                    enemy_vel.velocity.x = enemy_vel.velocity.x.max(0.0);
-                } else {
-                    enemy_tf.translation.x -= overlap_x;
-                    enemy_vel.velocity.x = enemy_vel.velocity.x.min(0.0);
+                let sign = if dx >= 0.0 { 1.0_f32 } else { -1.0_f32 };
+                table_tf.translation.x += sign * overlap_x * ENEMY_WALK_TABLE_PUSH;
+                enemy_tf.translation.x  -= sign * overlap_x * (1.0 - ENEMY_WALK_TABLE_PUSH);
+                if table_vel.velocity.x * sign < 0.0 {
+                    table_vel.velocity.x = 0.0;
                 }
             } else {
-                if ep.y > tp.y {
-                    enemy_tf.translation.y += overlap_y;
-                    enemy_vel.velocity.y = enemy_vel.velocity.y.max(0.0);
-                } else {
-                    enemy_tf.translation.y -= overlap_y;
-                    enemy_vel.velocity.y = enemy_vel.velocity.y.min(0.0);
+                let sign = if dy >= 0.0 { 1.0_f32 } else { -1.0_f32 };
+                table_tf.translation.y += sign * overlap_y * ENEMY_WALK_TABLE_PUSH;
+                enemy_tf.translation.y  -= sign * overlap_y * (1.0 - ENEMY_WALK_TABLE_PUSH);
+                if table_vel.velocity.y * sign < 0.0 {
+                    table_vel.velocity.y = 0.0;
                 }
             }
+
+            let mut pos = table_tf.translation;
+            table::snap_out_of_walls(&mut pos, th, &wall_grid);
+            table_tf.translation = pos;
         }
     }
 }

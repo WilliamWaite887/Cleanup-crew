@@ -83,6 +83,9 @@ struct GameMusic;
 #[derive(Resource)]
 pub struct GameMusicVolume(pub f32);
 
+#[derive(Resource, Default)]
+pub struct MusicMuted(pub bool);
+
 #[derive(Component)]
 pub struct Damage { amount: f32, }
 
@@ -327,6 +330,7 @@ fn main() {
         
         .insert_resource(DamageCooldown(Timer::from_seconds(0.5, TimerMode::Once)))
         .insert_resource(GameMusicVolume(saved_volume))
+        .init_resource::<MusicMuted>()
         .run();
 }
 
@@ -881,7 +885,13 @@ fn start_game_music(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     volume: Res<GameMusicVolume>,
+    muted: Res<MusicMuted>,
 ) {
+    if muted.0 {
+        debug!("Game music skipped (muted)");
+        return;
+    }
+
     let music_handle = asset_server.load("audio/game_music_maybe.ogg");
 
     commands.spawn((
@@ -915,6 +925,7 @@ fn toggle_game_music(
     music_query: Query<Entity, With<GameMusic>>,
     volume: Res<GameMusicVolume>,
     bindings: Res<settings::KeyBindings>,
+    mut muted: ResMut<MusicMuted>,
 ) {
     if !keys.just_pressed(bindings.toggle_music) {
         return;
@@ -934,11 +945,13 @@ fn toggle_game_music(
             MusicTrack,
         ));
 
+        muted.0 = false;
         debug!("Game music toggled ON");
     } else {
         for e in &music_query {
             commands.entity(e).despawn();
         }
+        muted.0 = true;
         debug!("Game music toggled OFF");
     }
 }
