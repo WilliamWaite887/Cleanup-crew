@@ -307,7 +307,7 @@ pub fn entered_room(
 
 /// Returns the world position of the nearest non-wall, in-bounds tile to `pos`.
 /// Searches outward shell by shell (Chebyshev distance) up to 60 tiles away.
-fn nearest_floor_pos(
+pub(crate) fn nearest_floor_pos(
     pos: Vec2,
     wall_grid: &crate::map::WallGrid,
     grid: &crate::map::MapGridMeta,
@@ -354,7 +354,12 @@ pub fn playing_room(
             if rooms.0[index].numofenemies == 0{
                 // debug!("All enemies defeated");
 
-                let heart_pos = nearest_floor_pos(last_kill_pos.0, &wall_grid, &grid);
+                let mut heart_pos = nearest_floor_pos(last_kill_pos.0, &wall_grid, &grid);
+                if !rooms.0[index].bounds_check(heart_pos) {
+                    if let Some(fp) = rooms.0[index].random_floor_tile() {
+                        heart_pos = fp;
+                    }
+                }
                 crate::heart::spawn_heart(&mut commands, &heart_res, heart_pos);
                 if planet.is_none() {
                     crate::rewards::spawn_reward(&mut commands, reward_pos, &reward_res);

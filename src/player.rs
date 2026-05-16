@@ -169,13 +169,15 @@ impl Plugin for PlayerPlugin {
             .add_systems(Update, tick_dash_invincibility.run_if(in_state(GameState::Playing)))
             .add_systems(Update, thruster_regen_system.run_if(in_state(GameState::Playing)))
             .add_systems(Update, thruster_dodge_system.run_if(in_state(GameState::Playing)).run_if(not(resource_exists::<crate::pause::IsPaused>)))
+            .add_systems(Update, debug_end_credits.run_if(in_state(GameState::Playing)))
             .add_systems(Update, move_player.run_if(in_state(GameState::Playing)).run_if(not(resource_exists::<crate::pause::IsPaused>)))
             .add_systems(Update, update_player_sprite.run_if(in_state(GameState::Playing)))
             .add_systems(Update, apply_breach_force_to_player.after(move_player).run_if(in_state(GameState::Playing)))
             // .add_systems(Update, move_bullet.run_if(in_state(GameState::Playing)))
             // .add_systems(Update, bullet_collision.run_if(in_state(GameState::Playing)))
             // .add_systems(Update, animate_bullet.after(move_bullet).run_if(in_state(GameState::Playing)),)
-            .add_systems(Update, enemy_hits_player.run_if(in_state(GameState::Playing)))
+            .add_systems(Update, enemy_hits_player
+                .run_if(in_state(GameState::Playing)))
             .add_systems(Update, player_deflects_tables
                 .after(table::collide_tables_with_tables)
                 .run_if(in_state(GameState::Playing)))
@@ -339,12 +341,20 @@ fn spawn_player(
  * With tells bevy to include entities with the Player component
  * Without is the opposite
 */
+fn debug_end_credits(
+    input: Res<ButtonInput<KeyCode>>,
+    mut next_state: ResMut<NextState<GameState>>,
+) {
+    if input.just_pressed(KeyCode::KeyT) {
+        next_state.set(GameState::EndCredits);
+    }
+}
+
 fn move_player(
     time: Res<Time>,
     input: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     mut player: Query<(&mut Transform, &mut Velocity, &mut Facing, &MoveSpeed, &mut WeaponInventory), With<Player>>,
-    mut next_state: ResMut<NextState<GameState>>,
     // Excludes permanent wall tiles and tables — tables are handled by player_deflects_tables.
     colliders: Query<(&Transform, &Collider), (With<Collidable>, Without<Player>, Without<Bullet>, Without<Broom>, Without<crate::map::WallTile>, Without<table::Table>)>,
     wall_grid: Res<crate::map::WallGrid>,
@@ -370,9 +380,6 @@ fn move_player(
 
     let mut dir: Vec2 = Vec2::ZERO;
 
-    if input.just_pressed(KeyCode::KeyT) {
-        next_state.set(GameState::EndCredits);
-    }
     if input.pressed(bindings.move_left) {
         dir.x -= 1.;
         facing.0 = FacingDirection::Left;
@@ -791,6 +798,7 @@ fn player_deflects_tables(
     player_tf.translation.x += player_correction.x;
     player_tf.translation.y += player_correction.y;
 }
+
 
 fn apply_breach_force_to_player(
     time: Res<Time>,

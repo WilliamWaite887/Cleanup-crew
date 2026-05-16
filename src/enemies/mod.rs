@@ -227,6 +227,9 @@ fn update_enemy_health_bars(
 
 fn kill_enemies_outside_station(
     grid_meta: Res<crate::map::MapGridMeta>,
+    wall_grid: Res<crate::map::WallGrid>,
+    lvlstate: Res<LevelState>,
+    rooms: Res<RoomVec>,
     mut enemy_query: Query<(&Transform, &mut Health), (With<Enemy>, Without<Reaper>)>,
 ) {
     let tile = crate::TILE_SIZE;
@@ -235,10 +238,31 @@ fn kill_enemies_outside_station(
     let y_min = grid_meta.y0 - tile * 0.5;
     let y_max = grid_meta.y0 + grid_meta.rows as f32 * tile - tile * 0.5;
 
+    let active_room = if let LevelState::InRoom(i, _, _) = *lvlstate { Some(i) } else { None };
+
     for (tf, mut hp) in &mut enemy_query {
-        let p = tf.translation;
+        if hp.0 <= 0.0 { continue; }
+        let p = tf.translation.truncate();
+
+        // Outside grid bounds entirely.
         if p.x < x_min || p.x > x_max || p.y < y_min || p.y > y_max {
             hp.0 = 0.0;
+            continue;
+        }
+
+        // Center tile is a wall or window — enemy has clipped inside geometry.
+        let (col, row) = wall_grid.world_to_tile(p);
+        if wall_grid.is_wall_tile(col, row) {
+            hp.0 = 0.0;
+            continue;
+        }
+
+        // During active combat, any enemy that has escaped the locked room is
+        // unreachable and would soft-lock the player.
+        if let Some(idx) = active_room {
+            if !rooms.0[idx].bounds_check(p) {
+                hp.0 = 0.0;
+            }
         }
     }
 }
@@ -449,7 +473,7 @@ fn move_enemy(
     >,
     wall_grid: Res<crate::map::WallGrid>,
     grid_query: Query<&crate::fluiddynamics::FluidGrid>,
-    door_query: Query<(&Transform, &Collider), (With<Collidable>, Without<crate::map::WallTile>, Without<crate::table::Table>, Without<Enemy>)>,
+    door_query: Query<(&Transform, &Collider), (With<Collidable>, Without<crate::map::WallTile>, Without<crate::table::Table>, Without<Enemy>, Without<Player>)>,
 ) {
     let grid_has_breach = if let Ok(grid) = grid_query.single() {
         !grid.breaches.is_empty()
@@ -496,53 +520,61 @@ fn move_enemy(
 
         if change.x != 0.0 {
             let mut nx = pos.x + change.x;
+            let mut hit_wall_x = false;
             for (wall_pos, wall_half) in wall_grid.nearby(Vec2::new(nx, pos.y), 3) {
                 if crate::player::aabb_overlap(nx, pos.y, enemy_half, wall_pos.x, wall_pos.y, wall_half) {
-                    nx = if change.x > 0.0 {
+                    let candidate = if change.x > 0.0 {
                         wall_pos.x - (enemy_half.x + wall_half.x)
                     } else {
                         wall_pos.x + (enemy_half.x + wall_half.x)
                     };
-                    enemy_velocity.velocity.x = 0.0;
+                    nx = if change.x > 0.0 { nx.min(candidate) } else { nx.max(candidate) };
+                    hit_wall_x = true;
                 }
             }
             for (dt, dc) in &door_query {
                 let (cx, cy) = (dt.translation.x, dt.translation.y);
                 if crate::player::aabb_overlap(nx, pos.y, enemy_half, cx, cy, dc.half_extents) {
-                    nx = if change.x > 0.0 {
+                    let candidate = if change.x > 0.0 {
                         cx - (enemy_half.x + dc.half_extents.x)
                     } else {
                         cx + (enemy_half.x + dc.half_extents.x)
                     };
-                    enemy_velocity.velocity.x = 0.0;
+                    nx = if change.x > 0.0 { nx.min(candidate) } else { nx.max(candidate) };
+                    hit_wall_x = true;
                 }
             }
+            if hit_wall_x { enemy_velocity.velocity.x = 0.0; }
             pos.x = nx;
         }
 
         if change.y != 0.0 {
             let mut ny = pos.y + change.y;
+            let mut hit_wall_y = false;
             for (wall_pos, wall_half) in wall_grid.nearby(Vec2::new(pos.x, ny), 3) {
                 if crate::player::aabb_overlap(pos.x, ny, enemy_half, wall_pos.x, wall_pos.y, wall_half) {
-                    ny = if change.y > 0.0 {
+                    let candidate = if change.y > 0.0 {
                         wall_pos.y - (enemy_half.y + wall_half.y)
                     } else {
                         wall_pos.y + (enemy_half.y + wall_half.y)
                     };
-                    enemy_velocity.velocity.y = 0.0;
+                    ny = if change.y > 0.0 { ny.min(candidate) } else { ny.max(candidate) };
+                    hit_wall_y = true;
                 }
             }
             for (dt, dc) in &door_query {
                 let (cx, cy) = (dt.translation.x, dt.translation.y);
                 if crate::player::aabb_overlap(pos.x, ny, enemy_half, cx, cy, dc.half_extents) {
-                    ny = if change.y > 0.0 {
+                    let candidate = if change.y > 0.0 {
                         cy - (enemy_half.y + dc.half_extents.y)
                     } else {
                         cy + (enemy_half.y + dc.half_extents.y)
                     };
-                    enemy_velocity.velocity.y = 0.0;
+                    ny = if change.y > 0.0 { ny.min(candidate) } else { ny.max(candidate) };
+                    hit_wall_y = true;
                 }
             }
+            if hit_wall_y { enemy_velocity.velocity.y = 0.0; }
             pos.y = ny;
         }
 
@@ -564,32 +596,34 @@ fn move_reaper_freely(
 fn wall_correction_for_enemies(
     mut enemy_query: Query<&mut Transform, (With<Enemy>, With<ActiveEnemy>, Without<Reaper>)>,
     wall_grid: Res<crate::map::WallGrid>,
-    door_query: Query<(&Transform, &Collider), (With<Collidable>, Without<crate::map::WallTile>, Without<crate::table::Table>, Without<Enemy>)>,
+    door_query: Query<(&Transform, &Collider), (With<Collidable>, Without<crate::map::WallTile>, Without<crate::table::Table>, Without<Enemy>, Without<Player>)>,
 ) {
     let enemy_half = Vec2::splat(ENEMY_SIZE * 0.5);
 
     for mut enemy_tf in &mut enemy_query {
         let mut pos = enemy_tf.translation.truncate();
-        for (wall_pos, wall_half) in wall_grid.nearby(pos, 3) {
-            if crate::player::aabb_overlap(pos.x, pos.y, enemy_half, wall_pos.x, wall_pos.y, wall_half) {
-                let overlap_x = (enemy_half.x + wall_half.x) - (pos.x - wall_pos.x).abs();
-                let overlap_y = (enemy_half.y + wall_half.y) - (pos.y - wall_pos.y).abs();
-                if overlap_x < overlap_y {
-                    pos.x += if pos.x > wall_pos.x { overlap_x } else { -overlap_x };
-                } else {
-                    pos.y += if pos.y > wall_pos.y { overlap_y } else { -overlap_y };
+        for _ in 0..2 {
+            for (wall_pos, wall_half) in wall_grid.nearby(pos, 3) {
+                if crate::player::aabb_overlap(pos.x, pos.y, enemy_half, wall_pos.x, wall_pos.y, wall_half) {
+                    let overlap_x = (enemy_half.x + wall_half.x) - (pos.x - wall_pos.x).abs();
+                    let overlap_y = (enemy_half.y + wall_half.y) - (pos.y - wall_pos.y).abs();
+                    if overlap_x < overlap_y {
+                        pos.x += if pos.x > wall_pos.x { overlap_x } else { -overlap_x };
+                    } else {
+                        pos.y += if pos.y > wall_pos.y { overlap_y } else { -overlap_y };
+                    }
                 }
             }
-        }
-        for (dt, dc) in &door_query {
-            let dp = dt.translation.truncate();
-            if crate::player::aabb_overlap(pos.x, pos.y, enemy_half, dp.x, dp.y, dc.half_extents) {
-                let overlap_x = (enemy_half.x + dc.half_extents.x) - (pos.x - dp.x).abs();
-                let overlap_y = (enemy_half.y + dc.half_extents.y) - (pos.y - dp.y).abs();
-                if overlap_x < overlap_y {
-                    pos.x += if pos.x > dp.x { overlap_x } else { -overlap_x };
-                } else {
-                    pos.y += if pos.y > dp.y { overlap_y } else { -overlap_y };
+            for (dt, dc) in &door_query {
+                let dp = dt.translation.truncate();
+                if crate::player::aabb_overlap(pos.x, pos.y, enemy_half, dp.x, dp.y, dc.half_extents) {
+                    let overlap_x = (enemy_half.x + dc.half_extents.x) - (pos.x - dp.x).abs();
+                    let overlap_y = (enemy_half.y + dc.half_extents.y) - (pos.y - dp.y).abs();
+                    if overlap_x < overlap_y {
+                        pos.x += if pos.x > dp.x { overlap_x } else { -overlap_x };
+                    } else {
+                        pos.y += if pos.y > dp.y { overlap_y } else { -overlap_y };
+                    }
                 }
             }
         }
@@ -644,17 +678,30 @@ fn enemies_collide_with_tables(
             let mut pos = table_tf.translation;
             table::snap_out_of_walls(&mut pos, th, &wall_grid);
             table_tf.translation = pos;
+
+            let mut epos = enemy_tf.translation;
+            table::snap_out_of_walls(&mut epos, enemy_half, &wall_grid);
+            enemy_tf.translation = epos;
         }
     }
 }
 
 fn collide_enemies_with_enemies(
     mut enemy_query: Query<(&mut Transform, &mut Velocity), (With<Enemy>, With<ActiveEnemy>, Without<Reaper>)>,
+    wall_grid: Res<crate::map::WallGrid>,
+    door_query: Query<(&Transform, &Collider), (With<Collidable>, Without<crate::map::WallTile>, Without<crate::table::Table>, Without<Enemy>, Without<Player>)>,
 ) {
     // Use a circle distance slightly larger than the sprite so enemies don't stack.
     let sep = ENEMY_SIZE * 1.15;
     let sep2 = sep * sep;
     let max_check2 = (ENEMY_SIZE * 5.0) * (ENEMY_SIZE * 5.0);
+    let enemy_half = Vec2::splat(ENEMY_SIZE * 0.5);
+
+    // Collect door positions once to avoid borrow issues inside iter_combinations_mut.
+    let doors: Vec<(Vec2, Vec2)> = door_query
+        .iter()
+        .map(|(tf, col)| (tf.translation.truncate(), col.half_extents))
+        .collect();
 
     let mut combinations = enemy_query.iter_combinations_mut();
     while let Some([(mut tf1, mut vel1), (mut tf2, mut vel2)]) = combinations.fetch_next() {
@@ -682,6 +729,38 @@ fn collide_enemies_with_enemies(
                 let correction = push_dir * approach * 0.5;
                 vel1.velocity -= correction;
                 vel2.velocity += correction;
+            }
+
+            // Correct each entity against walls and doors immediately after this pair
+            // push. Doing it inline (rather than in a later system) ensures each
+            // individual displacement (~18 px) is too small to tunnel past a wall
+            // center, so the direction check stays correct.
+            for tf in [&mut tf1, &mut tf2] {
+                let mut pos = tf.translation.truncate();
+                for (wall_pos, wall_half) in wall_grid.nearby(pos, 3) {
+                    if crate::player::aabb_overlap(pos.x, pos.y, enemy_half, wall_pos.x, wall_pos.y, wall_half) {
+                        let ox = (enemy_half.x + wall_half.x) - (pos.x - wall_pos.x).abs();
+                        let oy = (enemy_half.y + wall_half.y) - (pos.y - wall_pos.y).abs();
+                        if ox < oy {
+                            pos.x += if pos.x > wall_pos.x { ox } else { -ox };
+                        } else {
+                            pos.y += if pos.y > wall_pos.y { oy } else { -oy };
+                        }
+                    }
+                }
+                for &(dp, dh) in &doors {
+                    if crate::player::aabb_overlap(pos.x, pos.y, enemy_half, dp.x, dp.y, dh) {
+                        let ox = (enemy_half.x + dh.x) - (pos.x - dp.x).abs();
+                        let oy = (enemy_half.y + dh.y) - (pos.y - dp.y).abs();
+                        if ox < oy {
+                            pos.x += if pos.x > dp.x { ox } else { -ox };
+                        } else {
+                            pos.y += if pos.y > dp.y { oy } else { -oy };
+                        }
+                    }
+                }
+                tf.translation.x = pos.x;
+                tf.translation.y = pos.y;
             }
         }
     }
