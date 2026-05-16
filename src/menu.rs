@@ -194,7 +194,7 @@ fn setup_menu(
                             "Controls",
                             "WASD — Move          Shift — Dash",
                             "Left Click — Shoot",
-                            "B — Broom (sweep, deflect bullets, fix windows)",
+                            "Right Click — Broom (sweeps toward mouse, deflects bullets, fixes windows)",
                             "Tab — Toggle Minimap",
                             "M — Toggle Music       Esc — Pause",
                         ] {
