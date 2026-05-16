@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy::app::AppExit;
 
-use crate::{GameState, GameMusicVolume, MusicTrack, PlanetLevelMarker};
+use crate::{GameState, GameMusicVolume, MusicTrack, PlanetLevelMarker, TestRoomMarker};
 use crate::settings;
 
 pub struct MenuPlugin;
@@ -24,6 +24,7 @@ struct MenuUI;
 enum MenuButton {
     Play,
     PlayPlanet,
+    TestRoom,
     Credits,
     Settings,
     Quit,
@@ -100,6 +101,29 @@ fn setup_menu(
                         MenuButton::Play,
                         ImageNode::new(assets.load("menu/Title_Play.png")),
                     ));
+
+                    // Table Test Room button
+                    col.spawn((
+                        Button,
+                        MenuButton::TestRoom,
+                        Node {
+                            width: Val::Px(420.0),
+                            height: Val::Px(60.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            padding: UiRect::all(Val::Px(8.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.15, 0.1, 0.0, 0.8)),
+                        BorderColor(Color::srgba(1.0, 0.7, 0.2, 0.5)),
+                        BorderRadius::all(Val::Px(6.0)),
+                    ))
+                    .with_children(|b| {
+                        b.spawn((
+                            Text::new("Test Room"),
+                            TextFont { font_size: 28.0, ..default() },
+                        ));
+                    });
 
                     // Planet Test Button
                     col.spawn((
@@ -260,6 +284,10 @@ fn handle_buttons(
             }
             MenuButton::PlayPlanet => {
                 commands.insert_resource(PlanetLevelMarker);
+                next_state.set(GameState::Loading);
+            }
+            MenuButton::TestRoom => {
+                commands.insert_resource(TestRoomMarker);
                 next_state.set(GameState::Loading);
             }
             MenuButton::Credits => {

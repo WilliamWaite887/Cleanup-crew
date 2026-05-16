@@ -132,6 +132,10 @@ impl Default for StationLevel {
 #[derive(Resource)]
 pub struct PlanetLevelMarker;
 
+/// Inserted before entering GameState::Loading to load the table test room (room3).
+#[derive(Resource)]
+pub struct TestRoomMarker;
+
 /// How many planet levels have been cleared this run.
 #[derive(Resource, Default)]
 pub struct PlanetCount(pub u32);

@@ -187,6 +187,7 @@ impl Plugin for PlayerPlugin {
             .add_systems(Update, wall_collision_correction
                 .after(apply_breach_force_to_player)
                 .after(table::collide_tables_with_tables)
+                .after(player_deflects_tables)
                 .run_if(in_state(GameState::Playing)))
 
             ;
@@ -748,6 +749,7 @@ fn player_deflects_tables(
     mut table_query: Query<(&mut Transform, &Collider, &mut crate::enemies::Velocity, &table::TableRoom), (With<table::Table>, Without<Player>)>,
     wall_grid: Res<crate::map::WallGrid>,
     active_room: Res<table::ActiveRoom>,
+    dynamic_q: Query<(&Transform, &Collider), (With<crate::collidable::Collidable>, Without<Player>, Without<crate::map::WallTile>, Without<table::Table>)>,
 ) {
     let Some(active) = active_room.0 else { return; };
     let Ok(mut player_tf) = player_query.single_mut() else { return; };
@@ -795,8 +797,75 @@ fn player_deflects_tables(
         table_tf.translation = pos;
     }
 
-    player_tf.translation.x += player_correction.x;
-    player_tf.translation.y += player_correction.y;
+    let original_pos = player_tf.translation.truncate();
+
+    // Gather blocking surfaces from the ORIGINAL position so we catch anything
+    // between old and new position (prevents tunneling). Static walls from the
+    // spatial hash plus dynamic collidables (includes broken windows, which are
+    // removed from WallGrid when broken but keep their Collidable component).
+    let mut surfaces: Vec<(Vec2, Vec2)> = wall_grid.nearby(original_pos, 4);
+    for (tf, col) in &dynamic_q {
+        surfaces.push((tf.translation.truncate(), col.half_extents));
+    }
+
+    // Per-axis blocking: stop at the wall boundary rather than pushing back out
+    // from an already-tunneled position. Same logic move_player uses.
+    let mut pos = original_pos;
+
+    if player_correction.x != 0.0 {
+        let mut nx = pos.x + player_correction.x;
+        for &(wall_pos, wall_half) in &surfaces {
+            let y_overlap = (pos.y - wall_pos.y).abs() < player_half.y + wall_half.y;
+            if y_overlap {
+                let combined_x = player_half.x + wall_half.x;
+                if player_correction.x < 0.0 {
+                    let contact = wall_pos.x + combined_x;
+                    if (pos.x >= contact && nx < contact)
+                        || aabb_overlap(nx, pos.y, player_half, wall_pos.x, wall_pos.y, wall_half)
+                    {
+                        nx = nx.max(contact);
+                    }
+                } else {
+                    let contact = wall_pos.x - combined_x;
+                    if (pos.x <= contact && nx > contact)
+                        || aabb_overlap(nx, pos.y, player_half, wall_pos.x, wall_pos.y, wall_half)
+                    {
+                        nx = nx.min(contact);
+                    }
+                }
+            }
+        }
+        pos.x = nx;
+    }
+
+    if player_correction.y != 0.0 {
+        let mut ny = pos.y + player_correction.y;
+        for &(wall_pos, wall_half) in &surfaces {
+            let x_overlap = (pos.x - wall_pos.x).abs() < player_half.x + wall_half.x;
+            if x_overlap {
+                let combined_y = player_half.y + wall_half.y;
+                if player_correction.y < 0.0 {
+                    let contact = wall_pos.y + combined_y;
+                    if (pos.y >= contact && ny < contact)
+                        || aabb_overlap(pos.x, ny, player_half, wall_pos.x, wall_pos.y, wall_half)
+                    {
+                        ny = ny.max(contact);
+                    }
+                } else {
+                    let contact = wall_pos.y - combined_y;
+                    if (pos.y <= contact && ny > contact)
+                        || aabb_overlap(pos.x, ny, player_half, wall_pos.x, wall_pos.y, wall_half)
+                    {
+                        ny = ny.min(contact);
+                    }
+                }
+            }
+        }
+        pos.y = ny;
+    }
+
+    player_tf.translation.x = pos.x;
+    player_tf.translation.y = pos.y;
 }
 
 

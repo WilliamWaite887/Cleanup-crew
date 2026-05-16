@@ -113,10 +113,13 @@ fn animate_broken_tables(
 }
 
 fn apply_table_velocity(
+    mut commands: Commands,
     time: Res<Time>,
     active_room: Res<ActiveRoom>,
-    mut table_query: Query<(&mut Transform, &mut Velocity, &Collider, &TableRoom), With<Table>>,
+    mut table_query: Query<(Entity, &mut Transform, &mut Velocity, &Collider, &TableRoom), With<Table>>,
     wall_grid: Res<crate::map::WallGrid>,
+    rooms: Res<crate::room::RoomVec>,
+    grid_meta: Res<crate::map::MapGridMeta>,
 ) {
     let Some(active) = active_room.0 else { return; };
 
@@ -124,15 +127,38 @@ fn apply_table_velocity(
     let delta = time.delta_secs().min(0.05);
 
     // Nothing moving — skip all wall-collision work.
-    if !table_query.iter().any(|(_, v, _, room)| {
+    if !table_query.iter().any(|(_, _, v, _, room)| {
         room.0 == active && v.velocity.length_squared() >= 0.01
     }) {
         return;
     }
 
-    for (mut transform, mut velocity, table_collider, room) in &mut table_query {
+    let tile = crate::TILE_SIZE;
+    let map_x_min = grid_meta.x0 - tile * 0.5;
+    let map_x_max = grid_meta.x0 + grid_meta.cols as f32 * tile - tile * 0.5;
+    let map_y_min = grid_meta.y0 - tile * 0.5;
+    let map_y_max = grid_meta.y0 + grid_meta.rows as f32 * tile - tile * 0.5;
+
+    let room_bounds = rooms.0.get(active);
+
+    for (entity, mut transform, mut velocity, table_collider, room) in &mut table_query {
         if room.0 != active { continue; }
         if velocity.velocity.length_squared() < 0.01 { continue; }
+
+        let in_station = room_bounds
+            .map_or(true, |r| r.bounds_check(transform.translation.truncate()));
+
+        if !in_station {
+            // No friction or wall stops — drift at constant velocity until off the map.
+            let change = velocity.velocity * delta;
+            transform.translation.x += change.x;
+            transform.translation.y += change.y;
+            let p = transform.translation.truncate();
+            if p.x < map_x_min || p.x > map_x_max || p.y < map_y_min || p.y > map_y_max {
+                commands.entity(entity).despawn();
+            }
+            continue;
+        }
 
         let max_speed = table_collider.half_extents.x.min(table_collider.half_extents.y) / delta;
         let speed = velocity.velocity.length();
