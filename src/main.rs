@@ -87,6 +87,9 @@ pub struct GameMusicVolume(pub f32);
 #[derive(Resource, Default)]
 pub struct MusicMuted(pub bool);
 
+#[derive(Resource)]
+struct ClickSoundRes(Handle<AudioSource>);
+
 #[derive(Component)]
 pub struct Damage { amount: f32, }
 
@@ -288,7 +291,8 @@ fn main() {
             station_symbol::StationSymbolPlugin,
             setup::SetupPlugin,
         ))
-        .add_systems(Startup, (setup_camera, rewards::load_reward_font))
+        .add_systems(Startup, (setup_camera, rewards::load_reward_font, load_click_sound))
+        .add_systems(Update, play_button_click.run_if(resource_exists::<ClickSoundRes>))
         .add_systems(OnEnter(GameState::Menu), log_state_change)
         .add_systems(OnEnter(GameState::Setup), log_state_change)
         .add_systems(OnEnter(GameState::Loading), log_state_change)
@@ -361,6 +365,26 @@ fn main() {
         .insert_resource(GameMusicVolume(saved_volume))
         .init_resource::<MusicMuted>()
         .run();
+}
+
+fn load_click_sound(mut commands: Commands, asset_server: Res<AssetServer>) {
+    commands.insert_resource(ClickSoundRes(asset_server.load("audio/click.ogg")));
+}
+
+fn play_button_click(
+    interactions: Query<&Interaction, (Changed<Interaction>, With<Button>)>,
+    click_sound: Res<ClickSoundRes>,
+    mut commands: Commands,
+) {
+    for interaction in &interactions {
+        if *interaction == Interaction::Pressed {
+            commands.spawn((
+                AudioPlayer::new(click_sound.0.clone()),
+                PlaybackSettings { volume: Volume::Linear(0.5), ..PlaybackSettings::DESPAWN },
+            ));
+            return;
+        }
+    }
 }
 
 fn check_win(
