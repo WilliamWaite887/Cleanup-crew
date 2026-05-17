@@ -238,7 +238,15 @@ impl Plugin for ProcGen {
                 build_full_level
                     .in_set(ProcgenSet::BuildFullLevel)
                     .after(ProcgenSet::LoadRooms)
-                    .run_if(not(resource_exists::<crate::PlanetLevelMarker>)),
+                    .run_if(not(resource_exists::<crate::PlanetLevelMarker>))
+                    .run_if(not(resource_exists::<crate::TestRoomMarker>)),
+            )
+            .add_systems(
+                OnEnter(GameState::Loading),
+                build_test_level
+                    .in_set(ProcgenSet::BuildFullLevel)
+                    .after(ProcgenSet::LoadRooms)
+                    .run_if(resource_exists::<crate::TestRoomMarker>),
             );
             app.insert_resource(WindowConfig {
                 density: 0.6,
@@ -344,6 +352,37 @@ pub fn build_full_level(
     let rows: Vec<String> = map.into_iter().map(|row| row.into_iter().collect()).collect();
     commands.insert_resource(crate::map::GeneratedLevel(rows));
     debug!("Finished building level in memory.");
+}
+
+/// Builds a minimal level containing only room3, surrounded by empty space, with
+/// walls generated at the border. Used by the "Test Room" menu button.
+pub fn build_test_level(
+    mut commands: Commands,
+    rooms: Res<RoomRes>,
+    mut room_vec: ResMut<RoomVec>,
+    window_cfg: Res<WindowConfig>,
+) {
+    let room = rooms.room(3);
+    let room_w = room.layout[0].len();
+    let room_h = room.layout.len();
+
+    // Pad 4 tiles on every side so generate_walls has room to place outer walls
+    // and the camera doesn't clip the edge at spawn.
+    const PAD: usize = 6;
+    let map_w = room_w + PAD * 2;
+    let map_h = room_h + PAD * 2;
+
+    let mut map: Vec<Vec<char>> = vec![vec!['.'; map_w]; map_h];
+
+    write_room(&mut map, room, PAD, PAD, &mut room_vec);
+    generate_walls(&mut map);
+
+    let mut rng = StdRng::seed_from_u64(42);
+    place_windows(&mut map, &room_vec, &window_cfg, &mut rng);
+
+    let rows: Vec<String> = map.into_iter().map(|row| row.into_iter().collect()).collect();
+    commands.insert_resource(crate::map::GeneratedLevel(rows));
+    debug!("Finished building test level in memory.");
 }
 
 // map: mutable 2D vector representing the map tiles.

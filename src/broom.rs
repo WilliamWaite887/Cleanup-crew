@@ -1,7 +1,7 @@
-use bevy::prelude::*;
+use bevy::{prelude::*, window::PrimaryWindow};
 use crate::bullet::aabb_overlap;
 use crate::{TILE_SIZE, GameState};
-use crate::player::{Player, Facing, FacingDirection};
+use crate::player::Player;
 use crate::collidable::Collider;
 use crate::enemies::Enemy;
 use crate::window::{Health, GlassState, Window};
@@ -15,9 +15,10 @@ pub struct Broom;
 pub struct BroomSwing {
     pub timer: Timer,
     pub active: bool,
+    pub base_angle: f32,
 }
 
-use crate::bullet::Bullet;
+use crate::bullet::{Bullet, BulletOwner, HitEnemies};
 use crate::GameEntity;
 
 pub struct BroomPlugin;
@@ -36,17 +37,19 @@ impl Plugin for BroomPlugin {
 pub fn broom_hit_bullets_system(
     mut commands: Commands,
     broom_query: Query<(&Transform, &Collider), With<Broom>>,
-    bullet_query: Query<(Entity, &Transform, &Collider), With<Bullet>>,
+    mut bullet_query: Query<(Entity, &Transform, &Collider, &mut crate::bullet::Velocity, &mut BulletOwner), With<Bullet>>,
 ) {
     let (broom_transform, broom_collider) = match broom_query.single() {
         Ok(b) => b,
-        Err(_) => return, // No broom active
+        Err(_) => return,
     };
 
     let broom_center = broom_transform.translation.truncate();
     let broom_half = broom_collider.half_extents;
 
-    for (bullet_entity, bullet_transform, bullet_collider) in bullet_query.iter() {
+    for (bullet_entity, bullet_transform, bullet_collider, mut vel, mut owner) in bullet_query.iter_mut() {
+        if !matches!(*owner, BulletOwner::Enemy) { continue; }
+
         let bullet_center = bullet_transform.translation.truncate();
         let bullet_half = bullet_collider.half_extents;
 
@@ -55,70 +58,79 @@ pub fn broom_hit_bullets_system(
             (broom_center.y - bullet_center.y).abs() < (broom_half.y + bullet_half.y);
 
         if overlap {
-            if let Ok(mut ec) = commands.get_entity(bullet_entity) { ec.despawn(); }
+            vel.0 = -vel.0;
+            *owner = BulletOwner::Player;
+            commands.entity(bullet_entity).insert(HitEnemies::default());
         }
     }
 }
 
 fn broom_input(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    bindings: Res<crate::settings::KeyBindings>,
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    player_query: Query<(&Transform, &Facing), (With<Player>, Without<Broom>)>,
+    player_query: Query<&Transform, (With<Player>, Without<Broom>)>,
     broom_q: Query<Entity, (With<Broom>, Without<Player>)>,
+    q_window: Query<&bevy::window::Window, With<PrimaryWindow>>,
+    q_camera: Query<(&Camera, &GlobalTransform)>,
 ) {
-    if mouse_buttons.just_pressed(MouseButton::Right) && broom_q.is_empty() {
-        if let Some((player_tf, facing)) = player_query.iter().next() {
-
-            let broom_length = TILE_SIZE * 2.5;
-            let broom_width  = TILE_SIZE * 1.0;
-
-            let broom_pos = player_tf.translation + match facing.0 {
-                FacingDirection::Up        => Vec3::new(0.0,  broom_length/2.0, 1.0),
-                FacingDirection::Down      => Vec3::new(0.0, -broom_length/2.0, 1.0),
-                FacingDirection::Left      => Vec3::new(-broom_length/2.0, 0.0, 1.0),
-                FacingDirection::Right     => Vec3::new( broom_length/2.0, 0.0, 1.0),
-                FacingDirection::UpRight   => Vec3::new( broom_length/2.0,  broom_length/2.0, 1.0),
-                FacingDirection::UpLeft    => Vec3::new(-broom_length/2.0,  broom_length/2.0, 1.0),
-                FacingDirection::DownRight => Vec3::new( broom_length/2.0, -broom_length/2.0, 1.0),
-                FacingDirection::DownLeft  => Vec3::new(-broom_length/2.0, -broom_length/2.0, 1.0),
-            };
-
-            let broom_image: Handle<Image> = asset_server.load("Broom.png");
-
-            commands.spawn((
-                Sprite {
-                    image: broom_image,
-                    custom_size: Some(Vec2::new(broom_length, broom_width)),
-                    anchor: bevy::sprite::Anchor::CenterLeft,
-                    ..default()
-                },
-                Transform {
-                    translation: broom_pos,
-                    ..default()
-                },
-                Broom,
-                BroomSwing {
-                    timer: Timer::from_seconds(0.25, TimerMode::Once),
-                    active: true,
-                },
-                // Collider kept for bullet-deflect size query; Collidable intentionally
-                // omitted so the sweeping broom is NOT treated as a wall by collision systems.
-                Collider::from_size(Vec2::new(broom_length, broom_width)),
-                GameEntity,
-            ));
-        }
+    if !bindings.broom.just_pressed(&keys, &mouse_buttons) || !broom_q.is_empty() {
+        return;
     }
+
+    let Some(player_tf) = player_query.iter().next() else { return };
+    let Ok(window) = q_window.single() else { return };
+    let Ok((camera, cam_transform)) = q_camera.single() else { return };
+    let Some(cursor_screen) = window.cursor_position() else { return };
+    let Ok(world_cursor) = camera.viewport_to_world_2d(cam_transform, cursor_screen) else { return };
+
+    let player_pos = player_tf.translation.truncate();
+    let to_mouse = world_cursor - player_pos;
+    let mouse_angle = to_mouse.y.atan2(to_mouse.x);
+
+    let broom_length = TILE_SIZE * 2.5;
+    let broom_width  = TILE_SIZE * 1.0;
+
+    let dir = Vec2::new(mouse_angle.cos(), mouse_angle.sin());
+    let broom_pos = player_tf.translation
+        + Vec3::new(dir.x * broom_length / 2.0, dir.y * broom_length / 2.0, 1.0);
+
+    let broom_image: Handle<Image> = asset_server.load("Broom.png");
+
+    commands.spawn((
+        Sprite {
+            image: broom_image,
+            custom_size: Some(Vec2::new(broom_length, broom_width)),
+            anchor: bevy::sprite::Anchor::CenterLeft,
+            ..default()
+        },
+        Transform {
+            translation: broom_pos,
+            ..default()
+        },
+        Broom,
+        BroomSwing {
+            timer: Timer::from_seconds(0.25, TimerMode::Once),
+            active: true,
+            base_angle: mouse_angle,
+        },
+        // Collider kept for bullet-deflect size query; Collidable intentionally
+        // omitted so the sweeping broom is NOT treated as a wall by collision systems.
+        Collider::from_size(Vec2::new(broom_length, broom_width)),
+        GameEntity,
+    ));
 }
 
 
 fn broom_swing_system(
     time: Res<Time>,
     mut commands: Commands,
-    player_query: Query<(&Transform, &Facing), (With<Player>, Without<Broom>)>,
+    player_query: Query<&Transform, (With<Player>, Without<Broom>)>,
     mut broom_query: Query<(Entity, &mut Transform, &mut BroomSwing), (With<Broom>, Without<Player>)>,
 ) {
-    if let Some((player_tf, facing)) = player_query.iter().next() {
+    if let Some(player_tf) = player_query.iter().next() {
         for (entity, mut broom_tf, mut swing) in &mut broom_query {
             swing.timer.tick(time.delta());
 
@@ -126,21 +138,10 @@ fn broom_swing_system(
                 let broom_length = TILE_SIZE * 2.5;
 
                 let sweep = (-90.0_f32).to_radians()
-                    + (swing.timer.elapsed_secs() / swing.timer.duration().as_secs_f32()) 
+                    + (swing.timer.elapsed_secs() / swing.timer.duration().as_secs_f32())
                     * (180.0_f32).to_radians();
 
-                let base_angle = match facing.0 {
-                    FacingDirection::Up        => std::f32::consts::FRAC_PI_2,
-                    FacingDirection::Down      => -std::f32::consts::FRAC_PI_2,
-                    FacingDirection::Left      => std::f32::consts::PI,
-                    FacingDirection::Right     => 0.0,
-                    FacingDirection::UpRight   => std::f32::consts::FRAC_PI_4,
-                    FacingDirection::UpLeft    => 3.0 * std::f32::consts::FRAC_PI_4,
-                    FacingDirection::DownRight => -std::f32::consts::FRAC_PI_4,
-                    FacingDirection::DownLeft  => -3.0 * std::f32::consts::FRAC_PI_4,
-                };
-
-                broom_tf.rotation = Quat::from_rotation_z(base_angle + sweep);
+                broom_tf.rotation = Quat::from_rotation_z(swing.base_angle + sweep);
                 broom_tf.translation =
                     player_tf.translation + broom_tf.rotation * Vec3::new(broom_length / 2.0, 0.0, 0.0);
 
@@ -180,31 +181,20 @@ pub fn broom_hit_enemies_system(
 
 
 fn broom_push_tables_system(
-    broom_query: Query<(&Transform, &Collider), With<Broom>>,
-    player_query: Query<(&Transform, &Facing), With<Player>>,
+    broom_query: Query<(&Transform, &Collider, &BroomSwing), With<Broom>>,
+    player_query: Query<&Transform, With<Player>>,
     mut table_query: Query<(&Transform, &Collider, &mut Velocity), With<Table>>,
 ) {
-    let (broom_tf, broom_col) = match broom_query.single() {
+    let (broom_tf, broom_col, swing) = match broom_query.single() {
         Ok(b) => b,
         Err(_) => return,
     };
-    let (player_tf, facing) = match player_query.single() {
+    let player_tf = match player_query.single() {
         Ok(f) => f,
         Err(_) => return,
     };
 
-    // Forward vector for the current facing direction
-    let forward = match facing.0 {
-        FacingDirection::Up        => Vec2::new( 0.0,  1.0),
-        FacingDirection::Down      => Vec2::new( 0.0, -1.0),
-        FacingDirection::Left      => Vec2::new(-1.0,  0.0),
-        FacingDirection::Right     => Vec2::new( 1.0,  0.0),
-        FacingDirection::UpRight   => Vec2::new( 1.0,  1.0).normalize(),
-        FacingDirection::UpLeft    => Vec2::new(-1.0,  1.0).normalize(),
-        FacingDirection::DownRight => Vec2::new( 1.0, -1.0).normalize(),
-        FacingDirection::DownLeft  => Vec2::new(-1.0, -1.0).normalize(),
-    };
-
+    let forward = Vec2::new(swing.base_angle.cos(), swing.base_angle.sin());
     // Perpendicular (90° clockwise): tables to the right go right, left go left
     let right = Vec2::new(forward.y, -forward.x);
 

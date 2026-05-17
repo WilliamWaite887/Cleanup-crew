@@ -9,20 +9,14 @@ use crate::enemies::HitAnimation;
 use crate::map::{LevelRes, MapGridMeta};
 use crate::fluiddynamics::PulledByFluid;
 use crate::bullet::{Bullet, Velocity};
-use crate::weapons::{Weapon, WeaponType, WeaponInventory, fire_weapon, BulletRes, WeaponSounds, BeamRifleRes};
+use crate::weapons::{Weapon, WeaponType, WeaponInventory};
 const WALL_SLIDE_FRICTION_MULTIPLIER: f32 = 0.92; // lower is more friction
 
-// #[derive(Resource)]
-// pub struct PlayerLaserSound(Handle<AudioSource>);
+#[derive(Component)]
+pub struct Player;
 
 #[derive(Component)]
-pub struct Player;           
-
-#[derive(Component)]
-pub struct NumOfCleared(pub usize);  
-
-// #[derive(Component, Deref, DerefMut)]
-// pub struct Velocity(Vec2);
+pub struct NumOfCleared(pub usize);
 
 #[derive(Resource)]
 pub struct PlayerRes{
@@ -99,20 +93,8 @@ pub struct WeaponBuffStacks {
     pub piercing: u32,
 }
 
-// #[derive(Resource)]
-// pub struct BulletRes(Handle<Image>, Handle<TextureAtlasLayout>);
-
-// #[derive(Resource)]
-// pub struct ShootTimer(pub Timer);
-
 #[derive(Component, Deref, DerefMut)]
 pub struct DamageTimer(pub Timer);
-
-// #[derive(Component, Deref, DerefMut)]
-// pub struct AnimationTimer(Timer);
-
-// #[derive(Component, Deref, DerefMut)]
-// pub struct AnimationFrameCount(usize);
 
 #[derive(Component)]
 pub struct Facing(pub FacingDirection);
@@ -128,16 +110,6 @@ pub enum FacingDirection {
     Left,
     Right,
 }
-
-//Creates an instance of a Velocity
-// impl Velocity {
-//     fn new() -> Self {
-//         Self(Vec2::ZERO)
-//     }
-//     fn new_vec(x: f32, y: f32) -> Self {
-//         Self(Vec2{x, y})
-//     }
-// }
 
 /// RoR2-style armor formula: returns the fraction of damage that gets through.
 /// armor=0 → 1.0 (full damage), armor=100 → 0.5, armor=200 → 0.33, etc.
@@ -169,13 +141,15 @@ impl Plugin for PlayerPlugin {
             .add_systems(Update, tick_dash_invincibility.run_if(in_state(GameState::Playing)))
             .add_systems(Update, thruster_regen_system.run_if(in_state(GameState::Playing)))
             .add_systems(Update, thruster_dodge_system.run_if(in_state(GameState::Playing)).run_if(not(resource_exists::<crate::pause::IsPaused>)))
+            .add_systems(Update, debug_end_credits.run_if(in_state(GameState::Playing)))
             .add_systems(Update, move_player.run_if(in_state(GameState::Playing)).run_if(not(resource_exists::<crate::pause::IsPaused>)))
             .add_systems(Update, update_player_sprite.run_if(in_state(GameState::Playing)))
             .add_systems(Update, apply_breach_force_to_player.after(move_player).run_if(in_state(GameState::Playing)))
             // .add_systems(Update, move_bullet.run_if(in_state(GameState::Playing)))
             // .add_systems(Update, bullet_collision.run_if(in_state(GameState::Playing)))
             // .add_systems(Update, animate_bullet.after(move_bullet).run_if(in_state(GameState::Playing)),)
-            .add_systems(Update, enemy_hits_player.run_if(in_state(GameState::Playing)))
+            .add_systems(Update, enemy_hits_player
+                .run_if(in_state(GameState::Playing)))
             .add_systems(Update, player_deflects_tables
                 .after(table::collide_tables_with_tables)
                 .run_if(in_state(GameState::Playing)))
@@ -185,6 +159,7 @@ impl Plugin for PlayerPlugin {
             .add_systems(Update, wall_collision_correction
                 .after(apply_breach_force_to_player)
                 .after(table::collide_tables_with_tables)
+                .after(player_deflects_tables)
                 .run_if(in_state(GameState::Playing)))
 
             ;
@@ -232,6 +207,7 @@ fn spawn_player(
     level: Res<LevelRes>,
     grid: Res<MapGridMeta>,
     saved_buffs: Option<Res<crate::SavedPlayerBuffs>>,
+    selected_weapon: Option<Res<crate::SelectedWeapon>>,
 ) {
     let (image, layout) = &player_sheet.down;
 
@@ -305,7 +281,10 @@ fn spawn_player(
             WeaponInventory { weapons: weapons_vec, equipped: 0 }
         }
     } else {
-        WeaponInventory::new(Weapon::new(WeaponType::Zapper))
+        let weapon_type = selected_weapon
+            .map(|r| r.0)
+            .unwrap_or(WeaponType::Zapper);
+        WeaponInventory::new(Weapon::new(weapon_type))
     };
 
     commands.spawn((
@@ -339,29 +318,31 @@ fn spawn_player(
  * With tells bevy to include entities with the Player component
  * Without is the opposite
 */
+fn debug_end_credits(
+    input: Res<ButtonInput<KeyCode>>,
+    mut next_state: ResMut<NextState<GameState>>,
+) {
+    if input.just_pressed(KeyCode::KeyT) {
+        next_state.set(GameState::EndCredits);
+    }
+}
+
 fn move_player(
     time: Res<Time>,
     input: Res<ButtonInput<KeyCode>>,
-    buttons: Res<ButtonInput<MouseButton>>,
-    mut player: Query<(&mut Transform, &mut Velocity, &mut Facing, &MoveSpeed, &mut WeaponInventory), With<Player>>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut player: Query<(&mut Transform, &mut Velocity, &mut Facing, &MoveSpeed), With<Player>>,
     // Excludes permanent wall tiles and tables — tables are handled by player_deflects_tables.
     colliders: Query<(&Transform, &Collider), (With<Collidable>, Without<Player>, Without<Bullet>, Without<Broom>, Without<crate::map::WallTile>, Without<table::Table>)>,
     wall_grid: Res<crate::map::WallGrid>,
-    mut commands: Commands,
-    bullet_res: Res<BulletRes>,
-    beam_res: Res<BeamRifleRes>,
-    weapon_sounds: Res<WeaponSounds>,
     grid_query: Query<&crate::fluiddynamics::FluidGrid>,
     bindings: Res<crate::settings::KeyBindings>,
-    mut sfx_cooldown: ResMut<crate::weapons::SfxCooldown>,
     code_session: Option<Res<crate::planet::CodeEntryState>>,
     term_session: Option<Res<crate::planet::TerminalSession>>,
 ) {
     let Ok(grid) = grid_query.single() else {
         return;
     };
-    let Ok((mut transform, mut velocity, mut facing, spd, mut inventory)) = player.single_mut() else {
+    let Ok((mut transform, mut velocity, mut facing, spd)) = player.single_mut() else {
         return;
     };
 
@@ -370,9 +351,6 @@ fn move_player(
 
     let mut dir: Vec2 = Vec2::ZERO;
 
-    if input.just_pressed(KeyCode::KeyT) {
-        next_state.set(GameState::EndCredits);
-    }
     if input.pressed(bindings.move_left) {
         dir.x -= 1.;
         facing.0 = FacingDirection::Left;
@@ -404,30 +382,6 @@ fn move_player(
         facing.0 = FacingDirection::DownLeft;
     }
 
-
-    if input.pressed(bindings.shoot) && inventory.current().can_shoot() && !buttons.pressed(MouseButton::Left) {
-        let bullet_dir = match facing.0 {
-            FacingDirection::Up => Vec2::new(0.0, 1.0),
-            FacingDirection::UpRight => Vec2::new(1.0, 1.0),
-            FacingDirection::UpLeft => Vec2::new(-1.0, 1.0),
-            FacingDirection::Down => Vec2::new(0.0, -1.0),
-            FacingDirection::DownRight => Vec2::new(1.0, -1.0),
-            FacingDirection::DownLeft => Vec2::new(-1.0, -1.0),
-            FacingDirection::Left => Vec2::new(-1.0, 0.0),
-            FacingDirection::Right => Vec2::new(1.0, 0.0),
-        };
-
-        fire_weapon(
-            &mut commands,
-            &mut inventory,
-            &bullet_res,
-            &beam_res,
-            &weapon_sounds,
-            &mut sfx_cooldown,
-            transform.translation.truncate(),
-            bullet_dir,
-        );
-    }
 
     //Time based on frame to ensure that movement is the same no matter the fps
     let deltat = time.delta_secs();
@@ -741,6 +695,7 @@ fn player_deflects_tables(
     mut table_query: Query<(&mut Transform, &Collider, &mut crate::enemies::Velocity, &table::TableRoom), (With<table::Table>, Without<Player>)>,
     wall_grid: Res<crate::map::WallGrid>,
     active_room: Res<table::ActiveRoom>,
+    dynamic_q: Query<(&Transform, &Collider), (With<crate::collidable::Collidable>, Without<Player>, Without<crate::map::WallTile>, Without<table::Table>)>,
 ) {
     let Some(active) = active_room.0 else { return; };
     let Ok(mut player_tf) = player_query.single_mut() else { return; };
@@ -788,9 +743,77 @@ fn player_deflects_tables(
         table_tf.translation = pos;
     }
 
-    player_tf.translation.x += player_correction.x;
-    player_tf.translation.y += player_correction.y;
+    let original_pos = player_tf.translation.truncate();
+
+    // Gather blocking surfaces from the ORIGINAL position so we catch anything
+    // between old and new position (prevents tunneling). Static walls from the
+    // spatial hash plus dynamic collidables (includes broken windows, which are
+    // removed from WallGrid when broken but keep their Collidable component).
+    let mut surfaces: Vec<(Vec2, Vec2)> = wall_grid.nearby(original_pos, 4);
+    for (tf, col) in &dynamic_q {
+        surfaces.push((tf.translation.truncate(), col.half_extents));
+    }
+
+    // Per-axis blocking: stop at the wall boundary rather than pushing back out
+    // from an already-tunneled position. Same logic move_player uses.
+    let mut pos = original_pos;
+
+    if player_correction.x != 0.0 {
+        let mut nx = pos.x + player_correction.x;
+        for &(wall_pos, wall_half) in &surfaces {
+            let y_overlap = (pos.y - wall_pos.y).abs() < player_half.y + wall_half.y;
+            if y_overlap {
+                let combined_x = player_half.x + wall_half.x;
+                if player_correction.x < 0.0 {
+                    let contact = wall_pos.x + combined_x;
+                    if (pos.x >= contact && nx < contact)
+                        || aabb_overlap(nx, pos.y, player_half, wall_pos.x, wall_pos.y, wall_half)
+                    {
+                        nx = nx.max(contact);
+                    }
+                } else {
+                    let contact = wall_pos.x - combined_x;
+                    if (pos.x <= contact && nx > contact)
+                        || aabb_overlap(nx, pos.y, player_half, wall_pos.x, wall_pos.y, wall_half)
+                    {
+                        nx = nx.min(contact);
+                    }
+                }
+            }
+        }
+        pos.x = nx;
+    }
+
+    if player_correction.y != 0.0 {
+        let mut ny = pos.y + player_correction.y;
+        for &(wall_pos, wall_half) in &surfaces {
+            let x_overlap = (pos.x - wall_pos.x).abs() < player_half.x + wall_half.x;
+            if x_overlap {
+                let combined_y = player_half.y + wall_half.y;
+                if player_correction.y < 0.0 {
+                    let contact = wall_pos.y + combined_y;
+                    if (pos.y >= contact && ny < contact)
+                        || aabb_overlap(pos.x, ny, player_half, wall_pos.x, wall_pos.y, wall_half)
+                    {
+                        ny = ny.max(contact);
+                    }
+                } else {
+                    let contact = wall_pos.y - combined_y;
+                    if (pos.y <= contact && ny > contact)
+                        || aabb_overlap(pos.x, ny, player_half, wall_pos.x, wall_pos.y, wall_half)
+                    {
+                        ny = ny.min(contact);
+                    }
+                }
+            }
+        }
+        pos.y = ny;
+    }
+
+    player_tf.translation.x = pos.x;
+    player_tf.translation.y = pos.y;
 }
+
 
 fn apply_breach_force_to_player(
     time: Res<Time>,

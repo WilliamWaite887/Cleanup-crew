@@ -71,6 +71,14 @@ enum BossArenaState {
     Active,
 }
 
+/// Collidable wall that seals the exit corridor until the boss is defeated.
+#[derive(Component)]
+struct BossExitDoor;
+
+/// The "Leave Planet" interactable that spawns in the exit room after the boss dies.
+#[derive(Component)]
+struct PlanetExitBeacon;
+
 /// Active code-entry session.
 #[derive(Resource)]
 pub struct CodeEntryState {
@@ -174,7 +182,7 @@ impl Plugin for PlanetPlugin {
             )
             .add_systems(
                 OnEnter(GameState::Playing),
-                (tint_planet_background, init_boss_arena_state, spawn_vault_rewards)
+                (tint_planet_background, init_boss_arena_state, spawn_vault_rewards, spawn_boss_exit_door, inject_test_planet_clues)
                     .run_if(resource_exists::<PlanetLevelMarker>),
             )
             .add_systems(
@@ -183,7 +191,12 @@ impl Plugin for PlanetPlugin {
             )
             .add_systems(
                 Update,
-                (boss_arena_trigger, check_planet_win, update_boss_health_bar)
+                (
+                    boss_arena_trigger,
+                    spawn_boss_chest,
+                    interact_with_exit_beacon,
+                    update_boss_health_bar,
+                )
                     .run_if(in_state(GameState::Playing))
                     .run_if(resource_exists::<PlanetLevelMarker>),
             )
@@ -314,6 +327,21 @@ const P1_SPAWN_TILE_BRC: Vec2 = Vec2::new(243.0, 187.0);
 // Boss spawns near the centre of the arena (col 30, row 20).
 const P1_BOSS_SPAWN: Vec3 = Vec3::new(-3824.0, 2544.0, Z_ENTITIES);
 
+// Chest spawns 4 tiles below the boss spawn after the boss is defeated.
+const BOSS_CHEST_POS: Vec3 = Vec3::new(-3824.0, 2416.0, Z_ENTITIES);
+
+// Exit corridor — 3-tile breach in the south wall of the boss arena (row 52, col 30 centre).
+const BOSS_EXIT_DOOR_POS: Vec3 = Vec3::new(-3824.0, 1520.0, Z_ENTITIES);
+
+// "Leave Planet" beacon — centre of the exit room (row 60, col 30).
+const PLANET_EXIT_BEACON_POS: Vec3 = Vec3::new(-3824.0, 1264.0, Z_ENTITIES);
+
+// Exit room (rows 54-66, cols 23-37).
+const P1_EXIT_TLC:      Vec2 = Vec2::new(-4048.0, 1456.0);
+const P1_EXIT_BRC:      Vec2 = Vec2::new(-3600.0, 1072.0);
+const P1_EXIT_TILE_TLC: Vec2 = Vec2::new(23.0, 54.0);
+const P1_EXIT_TILE_BRC: Vec2 = Vec2::new(37.0, 66.0);
+
 // Vault reward positions (cols 5-23, rows 133-142); code door at col 23.
 static P1_VAULT_REWARDS: [Vec3; 3] = [
     Vec3::new(-4528.0, -1200.0, Z_ENTITIES),  // col=8,  row=137
@@ -360,6 +388,15 @@ fn build_planet1_rooms() -> RoomVec {
     spawn.cleared = true;
     spawn.visited = true;
     rv.0.push(spawn);
+
+    // Exit room — accessible after boss is defeated; pre-cleared, revealed on entry.
+    let mut exit = Room::new(
+        P1_EXIT_TLC, P1_EXIT_BRC,
+        P1_EXIT_TILE_TLC, P1_EXIT_TILE_BRC,
+        make_empty_layout(),
+    );
+    exit.cleared = true;
+    rv.0.push(exit);
 
     rv
 }
@@ -470,6 +507,19 @@ fn restore_background(
 
 fn init_boss_arena_state(mut commands: Commands) {
     commands.insert_resource(BossArenaState::Idle);
+}
+
+/// Spawns a collidable wall entity sealing the exit corridor south of the boss arena.
+/// Despawned by `spawn_boss_chest` when the boss is defeated.
+fn spawn_boss_exit_door(mut commands: Commands, tiles: Res<TileRes>) {
+    commands.spawn((
+        Sprite::from_image(tiles.closed_door.clone()),
+        Transform::from_translation(BOSS_EXIT_DOOR_POS),
+        Collidable,
+        Collider { half_extents: Vec2::new(TILE_SIZE * 1.5, TILE_SIZE * 0.5) },
+        BossExitDoor,
+        crate::GameEntity,
+    ));
 }
 
 /// Detects when the player steps inside the boss arena and triggers the encounter.
@@ -610,18 +660,76 @@ fn update_boss_health_bar(
     fill_node.width = Val::Percent(pct);
 }
 
-// ── Win detection ─────────────────────────────────────────────────────────────
+// ── Boss death — spawn chest + open exit corridor ─────────────────────────────
 
-fn check_planet_win(
+fn spawn_boss_chest(
+    mut commands: Commands,
+    boss_q: Query<(), With<FinalBoss>>,
+    arena_state: Res<BossArenaState>,
+    mut key_state: ResMut<crate::key_chest::LevelKeyState>,
+    key_chest_res: Res<crate::key_chest::KeyChestRes>,
+    exit_door_q: Query<Entity, With<BossExitDoor>>,
+    asset_server: Res<AssetServer>,
+) {
+    if *arena_state != BossArenaState::Active { return; }
+    if !boss_q.is_empty() { return; }
+    if key_state.boss_chest_spawned { return; }
+
+    // Chest always spawns — key is needed to open it.
+    commands.spawn((
+        Sprite::from_image(key_chest_res.chest_img.clone()),
+        Transform::from_translation(BOSS_CHEST_POS),
+        crate::key_chest::Chest,
+        Collidable,
+        Collider { half_extents: Vec2::splat(TILE_SIZE * 0.5) },
+        crate::GameEntity,
+    ));
+
+    // Open the exit corridor.
+    for entity in &exit_door_q {
+        commands.entity(entity).despawn();
+    }
+
+    // Spawn the "Leave Planet" beacon in the exit room.
+    let font: Handle<Font> = asset_server.load(FONT_PATH);
+    commands.spawn((
+        Text2d::new("[ E ]  Leave Planet"),
+        TextFont { font, font_size: 24.0, ..default() },
+        TextColor(Color::srgb(0.3, 1.0, 0.4)),
+        Transform::from_translation(PLANET_EXIT_BEACON_POS),
+        PlanetExitBeacon,
+        crate::GameEntity,
+    ));
+
+    key_state.boss_chest_spawned = true;
+}
+
+// ── Planet exit — player presses E near the beacon ───────────────────────────
+
+fn interact_with_exit_beacon(
+    input: Res<ButtonInput<KeyCode>>,
+    player_q: Query<&Transform, With<Player>>,
+    beacon_q: Query<&Transform, With<PlanetExitBeacon>>,
+    boss_arena_state: Res<BossArenaState>,
+    session: Option<Res<TerminalSession>>,
+    code_session: Option<Res<CodeEntryState>>,
     mut next_state: ResMut<NextState<GameState>>,
     mut planet_count: ResMut<PlanetCount>,
-    boss_q: Query<(), With<FinalBoss>>,
-    boss_arena_state: Res<BossArenaState>,
+    bindings: Res<crate::settings::KeyBindings>,
 ) {
     if *boss_arena_state != BossArenaState::Active { return; }
-    if !boss_q.is_empty() { return; }
-    planet_count.0 += 1;
-    next_state.set(GameState::PlanetWin);
+    if session.is_some() || code_session.is_some() { return; }
+    if !input.just_pressed(bindings.interact) { return; }
+
+    let Ok(player_tf) = player_q.single() else { return };
+    let Ok(beacon_tf) = beacon_q.single() else { return };
+    let pp = player_tf.translation;
+    let bp = beacon_tf.translation;
+
+    if aabb_overlap(pp.x, pp.y, Vec2::splat(TILE_SIZE * 2.0), bp.x, bp.y, Vec2::splat(TILE_SIZE * 1.5)) {
+        planet_count.0 += 1;
+        next_state.set(GameState::PlanetWin);
+    }
 }
 
 // ── Vault rewards ─────────────────────────────────────────────────────────────
@@ -858,6 +966,7 @@ fn update_code_entry_ui(
     input: Res<ButtonInput<KeyCode>>,
     bindings: Res<crate::settings::KeyBindings>,
     time: Res<Time>,
+    player_q: Query<&Transform, With<Player>>,
     mut digit_q: Query<(&CodeDigitSlot, &mut Text, &mut TextColor)>,
     mut status_q: Query<(&mut Text, &mut TextColor), (With<CodeStatusText>, Without<CodeDigitSlot>)>,
     ui_q: Query<Entity, With<CodeEntryUi>>,
@@ -936,11 +1045,14 @@ fn update_code_entry_ui(
             let sig_a: u8 = random_range(1u8..=5u8);
             signals.signals[0] = Some(sig_a);
             let font: Handle<Font> = asset_server.load(FONT_PATH);
+            let popup_pos = player_q.single()
+                .map(|tf| tf.translation + Vec3::new(0.0, TILE_SIZE * 2.0, 100.0))
+                .unwrap_or(Vec3::new(0.0, 60.0, 100.0));
             commands.spawn((
                 Text2d::new(format!("Signal Strength A: {}", sig_a)),
                 TextFont { font, font_size: 20.0, ..default() },
                 TextColor(Color::srgb(0.2, 1.0, 0.5)),
-                Transform::from_translation(Vec3::new(0.0, 60.0, 100.0)),
+                Transform::from_translation(popup_pos),
                 crate::rewards::RewardPopup { timer: Timer::from_seconds(3.0, TimerMode::Once) },
                 GameEntity,
             ));
@@ -967,6 +1079,24 @@ fn close_keypad(commands: &mut Commands, ui_q: &Query<Entity, With<CodeEntryUi>>
 
 fn init_planet_signals(mut commands: Commands) {
     commands.insert_resource(PlanetSignals::default());
+}
+
+// ── Test-mode clue injection ─────────────────────────────────────────────────
+// When jumping straight to the planet from the menu (no station run), all clue
+// slots are None. Inject known fixed values so every terminal can be solved:
+//   Code door  : 1 – 2 – 3
+//   Color term : RED – GRN – BLU
+//   Symbol term: ▲ – ● – ■
+
+fn inject_test_planet_clues(
+    mut codes: ResMut<StationCodes>,
+    mut colors: ResMut<StationColors>,
+    mut symbols: ResMut<StationSymbols>,
+) {
+    if symbols.symbols.iter().any(|s| s.is_some()) { return; }
+    codes.codes     = [Some(1), Some(2), Some(3)];
+    colors.colors   = [Some(0), Some(1), Some(2)];
+    symbols.symbols = [Some(0), Some(1), Some(2)];
 }
 
 // ── Terminal helpers ──────────────────────────────────────────────────────────
@@ -1169,12 +1299,13 @@ fn update_terminal_ui(
     input: Res<ButtonInput<KeyCode>>,
     bindings: Res<crate::settings::KeyBindings>,
     time: Res<Time>,
+    player_q: Query<&Transform, With<Player>>,
     mut slot_q: Query<(&TerminalSlot, &mut Text, &mut TextColor)>,
     mut status_q: Query<(&mut Text, &mut TextColor), (With<TerminalStatusText>, Without<TerminalSlot>)>,
     ui_q: Query<Entity, With<TerminalUi>>,
     mut color_q: Query<&mut Sprite, (With<ColorTerminal>, Without<SymbolTerminal>, Without<FreqMaster>)>,
     mut symbol_q: Query<&mut Sprite, (With<SymbolTerminal>, Without<ColorTerminal>, Without<FreqMaster>)>,
-    mut freq_q: Query<&mut Sprite, (With<FreqMaster>, Without<ColorTerminal>, Without<SymbolTerminal>)>,
+    mut freq_q: Query<(Entity, &mut Sprite), (With<FreqMaster>, Without<ColorTerminal>, Without<SymbolTerminal>)>,
     asset_server: Res<AssetServer>,
 ) {
     let Some(mut state) = session else { return };
@@ -1239,6 +1370,9 @@ fn update_terminal_ui(
         if correct {
             let terminal_entity = state.terminal_entity;
             let font: Handle<Font> = asset_server.load(FONT_PATH);
+            let popup_pos = player_q.single()
+                .map(|tf| tf.translation + Vec3::new(0.0, TILE_SIZE * 2.0, 100.0))
+                .unwrap_or(Vec3::new(0.0, 60.0, 100.0));
 
             match kind {
                 TerminalKind::Color => {
@@ -1256,7 +1390,7 @@ fn update_terminal_ui(
                         Text2d::new(format!("Signal Strength B: {}", sig)),
                         TextFont { font, font_size: 20.0, ..default() },
                         TextColor(Color::srgb(1.0, 0.5, 0.2)),
-                        Transform::from_translation(Vec3::new(0.0, 60.0, 100.0)),
+                        Transform::from_translation(popup_pos),
                         crate::rewards::RewardPopup { timer: Timer::from_seconds(3.0, TimerMode::Once) },
                         GameEntity,
                     ));
@@ -1276,25 +1410,24 @@ fn update_terminal_ui(
                         Text2d::new(format!("Signal Strength C: {}", sig)),
                         TextFont { font, font_size: 20.0, ..default() },
                         TextColor(Color::srgb(0.8, 0.3, 1.0)),
-                        Transform::from_translation(Vec3::new(0.0, 60.0, 100.0)),
+                        Transform::from_translation(popup_pos),
                         crate::rewards::RewardPopup { timer: Timer::from_seconds(3.0, TimerMode::Once) },
                         GameEntity,
                     ));
                 }
                 TerminalKind::Freq => {
-                    if let Ok(mut sprite) = freq_q.get_mut(terminal_entity) {
+                    // Unlock every FreqMaster tile so the full widened doorway opens.
+                    for (entity, mut sprite) in freq_q.iter_mut() {
                         sprite.color = Color::srgb(0.3, 0.3, 0.3);
-                    }
-                    commands.entity(terminal_entity).remove::<Collidable>();
-                    commands.entity(terminal_entity).remove::<Collider>();
-                    if let Ok(mut e) = commands.get_entity(terminal_entity) {
-                        e.insert(FreqMaster { unlocked: true });
+                        commands.entity(entity).remove::<Collidable>();
+                        commands.entity(entity).remove::<Collider>();
+                        commands.entity(entity).insert(FreqMaster { unlocked: true });
                     }
                     commands.spawn((
                         Text2d::new("Boss Arena Unlocked!"),
                         TextFont { font, font_size: 24.0, ..default() },
                         TextColor(Color::srgb(0.2, 1.0, 0.4)),
-                        Transform::from_translation(Vec3::new(0.0, 60.0, 100.0)),
+                        Transform::from_translation(popup_pos),
                         crate::rewards::RewardPopup { timer: Timer::from_seconds(3.0, TimerMode::Once) },
                         GameEntity,
                     ));

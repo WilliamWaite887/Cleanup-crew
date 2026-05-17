@@ -8,7 +8,7 @@ use crate::station_color::StationColors;
 use crate::station_symbol::StationSymbols;
 use crate::planet::PlanetSignals;
 use crate::weapons::WeaponInventory;
-use crate::{GameEntity, GameState, TILE_SIZE};
+use crate::{GameEntity, GameState, TILE_SIZE, FONT_PATH};
 
 const MINIMAP_W: f32 = 420.0;
 const MINIMAP_H: f32 = 420.0;
@@ -48,6 +48,10 @@ enum InventoryBuffLine { AtkSpeed, Damage, Piercing }
 /// Marker for each station clue row in the inventory panel.
 #[derive(Component)]
 enum InventoryClueRow { Code, Color, Symbol, Signal }
+
+/// Marker for the key status row in the inventory panel.
+#[derive(Component)]
+struct InventoryKeyRow;
 
 // Resources
 
@@ -106,9 +110,7 @@ fn setup_minimap(
     let cols = grid.cols;
     let rows = grid.rows;
 
-    let font: Handle<Font> = asset_server.load(
-        "fonts/BitcountSingleInk-VariableFont_CRSV,ELSH,ELXP,SZP1,SZP2,XPN1,XPN2,YPN1,YPN2,slnt,wght.ttf",
-    );
+    let font: Handle<Font> = asset_server.load(FONT_PATH);
 
     // Precompute which coarse cells are hallway cells (floor tile outside every room).
     let mut hallway_cells: HashSet<(i32, i32)> = HashSet::new();
@@ -356,6 +358,14 @@ fn setup_minimap(
                     TextColor(Color::srgb(0.2, 1.0, 0.4)),
                     InventoryClueRow::Signal,
                 ));
+
+                inv_section_header(inv, &font, "KEY");
+                inv.spawn((
+                    Text::new(""),
+                    TextFont { font: font.clone(), font_size: 15.0, ..default() },
+                    TextColor(Color::srgb(1.0, 0.85, 0.2)),
+                    InventoryKeyRow,
+                ));
             });
         });
 }
@@ -398,7 +408,7 @@ fn toggle_minimap(
     mut root_q: Query<&mut Visibility, With<MinimapRoot>>,
     bindings: Res<crate::settings::KeyBindings>,
 ) {
-    if !keys.just_pressed(bindings.toggle_minimap) {
+    if !keys.just_pressed(bindings.inventory) {
         return;
     }
     visible.0 = !visible.0;
@@ -413,9 +423,11 @@ fn update_inventory_panel(
     colors: Res<StationColors>,
     symbols: Res<StationSymbols>,
     signals: Option<Res<PlanetSignals>>,
-    mut weapon_lines: Query<(&InventoryWeaponLine, &mut Text, &mut TextColor), (Without<InventoryBuffLine>, Without<InventoryClueRow>)>,
-    mut buff_lines: Query<(&InventoryBuffLine, &mut Text, &mut TextColor), (Without<InventoryWeaponLine>, Without<InventoryClueRow>)>,
-    mut clue_rows: Query<(&InventoryClueRow, &mut Text, &mut TextColor), (Without<InventoryBuffLine>, Without<InventoryWeaponLine>)>,
+    key_state: Option<Res<crate::key_chest::LevelKeyState>>,
+    mut weapon_lines: Query<(&InventoryWeaponLine, &mut Text, &mut TextColor), (Without<InventoryBuffLine>, Without<InventoryClueRow>, Without<InventoryKeyRow>)>,
+    mut buff_lines: Query<(&InventoryBuffLine, &mut Text, &mut TextColor), (Without<InventoryWeaponLine>, Without<InventoryClueRow>, Without<InventoryKeyRow>)>,
+    mut clue_rows: Query<(&InventoryClueRow, &mut Text, &mut TextColor), (Without<InventoryBuffLine>, Without<InventoryWeaponLine>, Without<InventoryKeyRow>)>,
+    mut key_rows: Query<(&mut Text, &mut TextColor), (With<InventoryKeyRow>, Without<InventoryBuffLine>, Without<InventoryWeaponLine>, Without<InventoryClueRow>)>,
 ) {
     let Ok((inv, buffs)) = player_q.single() else { return };
 
@@ -443,6 +455,13 @@ fn update_inventory_panel(
         *text = Text::new(format!("  {:<12}  +{}", label, count));
         *color = TextColor(if count > 0 { Color::srgb(0.4, 1.0, 0.5) } else { Color::srgb(0.5, 0.5, 0.5) });
     }
+
+    // Clue and key rows only change when pickups are collected — skip the
+    // format!/collect work every frame when nothing has changed.
+    let clues_changed = codes.is_changed() || colors.is_changed() || symbols.is_changed()
+        || signals.as_ref().map_or(false, |s| s.is_changed())
+        || key_state.as_ref().map_or(false, |k| k.is_changed());
+    if !clues_changed { return; }
 
     let color_names = ["RED", "GRN", "BLU", "YLW"];
     let symbol_chars = crate::station_symbol::SYMBOL_CHARS;
@@ -478,6 +497,16 @@ fn update_inventory_panel(
                 }
             }
         }
+    }
+
+    if let Ok((mut text, mut color)) = key_rows.single_mut() {
+        let has_key = key_state.map_or(false, |k| k.has_key);
+        *text = Text::new(if has_key { "  KEY   [found]" } else { "  KEY   —" });
+        *color = TextColor(if has_key {
+            Color::srgb(1.0, 0.85, 0.2)
+        } else {
+            Color::srgb(0.4, 0.4, 0.4)
+        });
     }
 }
 

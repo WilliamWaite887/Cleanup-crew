@@ -200,6 +200,8 @@ fn reaper_room_timer(
     player_q: Query<&Transform, With<Player>>,
     reaper_res: Res<ReaperRes>,
     assets: Res<AssetServer>,
+    wall_grid: Res<crate::map::WallGrid>,
+    grid: Res<crate::map::MapGridMeta>,
 ) {
     let current_idx_opt = match *lvlstate {
         LevelState::InRoom(idx, _, _) => Some(idx),
@@ -216,7 +218,13 @@ fn reaper_room_timer(
                 if let Ok(player_tf) = player_q.single() {
                     let angle = random_range(0.0..TAU);
                     let offset = Vec2::new(angle.cos(), angle.sin()) * 220.0;
-                    let pos = player_tf.translation.truncate() + offset;
+                    let raw_pos = player_tf.translation.truncate() + offset;
+                    // Snap to nearest floor tile so the Reaper never spawns inside geometry.
+                    let mut pos = crate::room::nearest_floor_pos(raw_pos, &wall_grid, &grid);
+                    // Fall back to player position if the snapped tile is outside the current room.
+                    if !rooms.0[idx].bounds_check(pos) {
+                        pos = player_tf.translation.truncate();
+                    }
                     let spawn_pos = Vec3::new(pos.x, pos.y, Z_ENTITIES);
                     state.spawn_position = Some(spawn_pos);
                     let circle = spawn_summoning_circle(&mut commands, spawn_pos);
@@ -386,6 +394,12 @@ fn reaper_cleanup_system(
         state.current_room = None;
         state.spawned_in_room = None;
         state.timer.reset();
+        if let Some(circle) = state.summoning_circle.take() {
+            if let Ok(mut e) = commands.get_entity(circle) {
+                e.despawn();
+            }
+        }
+        state.spawn_position = None;
     }
 }
 

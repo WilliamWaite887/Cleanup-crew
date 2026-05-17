@@ -35,6 +35,7 @@ pub mod station_code;
 pub mod station_color;
 pub mod station_symbol;
 pub mod air_particles;
+pub mod setup;
 
 pub const FONT_PATH: &str = "fonts/BitcountSingleInk-VariableFont_CRSV,ELSH,ELXP,SZP1,SZP2,XPN1,XPN2,YPN1,YPN2,slnt,wght.ttf";
 pub const SYMBOL_FONT_PATH: &str = "fonts/NotoSansMono-VariableFont_wdth,wght.ttf";
@@ -83,6 +84,12 @@ struct GameMusic;
 #[derive(Resource)]
 pub struct GameMusicVolume(pub f32);
 
+#[derive(Resource, Default)]
+pub struct MusicMuted(pub bool);
+
+#[derive(Resource)]
+struct ClickSoundRes(Handle<AudioSource>);
+
 #[derive(Component)]
 pub struct Damage { amount: f32, }
 
@@ -129,9 +136,30 @@ impl Default for StationLevel {
 #[derive(Resource)]
 pub struct PlanetLevelMarker;
 
+/// Inserted before entering GameState::Loading to load the table test room (room3).
+#[derive(Resource)]
+pub struct TestRoomMarker;
+
 /// How many planet levels have been cleared this run.
 #[derive(Resource, Default)]
 pub struct PlanetCount(pub u32);
+
+/// The weapon the player selected on the setup screen. Used by spawn_player on fresh runs.
+#[derive(Resource, Clone, Copy, PartialEq)]
+pub struct SelectedWeapon(pub weapons::WeaponType);
+
+impl Default for SelectedWeapon {
+    fn default() -> Self { Self(weapons::WeaponType::Zapper) }
+}
+
+/// The run the player selected on the setup screen (0 = "Run 1"). No gameplay effect yet.
+#[derive(Resource, Clone, Copy, Default)]
+pub struct SelectedRun(pub u32);
+
+/// Whether the player has ever unlocked the Beam Rifle (by opening the planet chest).
+/// Persisted to config.ron so it survives between sessions.
+#[derive(Resource, Clone, Copy)]
+pub struct BeamRifleUnlocked(pub bool);
 
 /// Per-weapon state saved between stations.
 #[derive(Clone)]
@@ -182,6 +210,7 @@ pub struct StationLevelDisplay;
 enum GameState {
     #[default]
     Menu,
+    Setup,
     Loading,
     Playing,
     GameOver,
@@ -193,6 +222,7 @@ enum GameState {
 fn main() {
     crash_log::install();
     let (saved_volume, saved_mode, saved_bindings) = settings::load_config();
+    let beam_rifle_unlocked = settings::load_beam_rifle_unlock();
 
     App::new()
         .add_plugins(
@@ -224,8 +254,11 @@ fn main() {
         .init_resource::<ShowAirLabels>()
         .init_resource::<StationLevel>()
         .init_resource::<PlanetCount>()
+        .init_resource::<SelectedWeapon>()
+        .init_resource::<SelectedRun>()
         .insert_resource(saved_mode)
         .insert_resource(saved_bindings)
+        .insert_resource(BeamRifleUnlocked(beam_rifle_unlocked))
         .add_plugins((
             procgen::ProcGen,
             map::MapPlugin,
@@ -256,9 +289,12 @@ fn main() {
         .add_plugins((
             station_color::StationColorPlugin,
             station_symbol::StationSymbolPlugin,
+            setup::SetupPlugin,
         ))
-        .add_systems(Startup, (setup_camera, rewards::load_reward_font))
+        .add_systems(Startup, (setup_camera, rewards::load_reward_font, load_click_sound))
+        .add_systems(Update, play_button_click.run_if(resource_exists::<ClickSoundRes>))
         .add_systems(OnEnter(GameState::Menu), log_state_change)
+        .add_systems(OnEnter(GameState::Setup), log_state_change)
         .add_systems(OnEnter(GameState::Loading), log_state_change)
         .add_systems(OnEnter(GameState::EndCredits), log_state_change)
         .add_systems(OnEnter(GameState::Playing), log_state_change)
@@ -327,7 +363,28 @@ fn main() {
         
         .insert_resource(DamageCooldown(Timer::from_seconds(0.5, TimerMode::Once)))
         .insert_resource(GameMusicVolume(saved_volume))
+        .init_resource::<MusicMuted>()
         .run();
+}
+
+fn load_click_sound(mut commands: Commands, asset_server: Res<AssetServer>) {
+    commands.insert_resource(ClickSoundRes(asset_server.load("audio/click.ogg")));
+}
+
+fn play_button_click(
+    interactions: Query<&Interaction, (Changed<Interaction>, With<Button>)>,
+    click_sound: Res<ClickSoundRes>,
+    mut commands: Commands,
+) {
+    for interaction in &interactions {
+        if *interaction == Interaction::Pressed {
+            commands.spawn((
+                AudioPlayer::new(click_sound.0.clone()),
+                PlaybackSettings { volume: Volume::Linear(0.5), ..PlaybackSettings::DESPAWN },
+            ));
+            return;
+        }
+    }
 }
 
 fn check_win(
@@ -881,7 +938,13 @@ fn start_game_music(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     volume: Res<GameMusicVolume>,
+    muted: Res<MusicMuted>,
 ) {
+    if muted.0 {
+        debug!("Game music skipped (muted)");
+        return;
+    }
+
     let music_handle = asset_server.load("audio/game_music_maybe.ogg");
 
     commands.spawn((
@@ -915,6 +978,7 @@ fn toggle_game_music(
     music_query: Query<Entity, With<GameMusic>>,
     volume: Res<GameMusicVolume>,
     bindings: Res<settings::KeyBindings>,
+    mut muted: ResMut<MusicMuted>,
 ) {
     if !keys.just_pressed(bindings.toggle_music) {
         return;
@@ -934,11 +998,13 @@ fn toggle_game_music(
             MusicTrack,
         ));
 
+        muted.0 = false;
         debug!("Game music toggled ON");
     } else {
         for e in &music_query {
             commands.entity(e).despawn();
         }
+        muted.0 = true;
         debug!("Game music toggled OFF");
     }
 }

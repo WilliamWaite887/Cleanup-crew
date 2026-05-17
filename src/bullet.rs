@@ -70,7 +70,9 @@ fn cursor_to_world(cursor_pos: Vec2, camera: (&Camera, &GlobalTransform)) -> Opt
 // Mouse shooting - uses weapon stats from player
 pub fn shoot_bullet_on_click(
     mut commands: Commands,
+    keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
+    bindings: Res<crate::settings::KeyBindings>,
     mut q_player: Query<(&Transform, &mut WeaponInventory), With<crate::player::Player>>,
     q_window: Query<&Window, With<PrimaryWindow>>,
     q_camera: Query<(&Camera, &GlobalTransform)>,
@@ -83,7 +85,7 @@ pub fn shoot_bullet_on_click(
         return;
     };
 
-    if buttons.pressed(MouseButton::Left) && inventory.current().can_shoot() {
+    if bindings.shoot.pressed(&keys, &buttons) && inventory.current().can_shoot() {
         let window = match q_window.single() {
             Ok(win) => win,
             Err(_) => return,

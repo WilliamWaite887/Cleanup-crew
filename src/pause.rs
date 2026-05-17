@@ -17,9 +17,13 @@ enum PauseButton {
     MainMenu,
 }
 
+#[derive(Resource)]
+struct PauseFontHandle(Handle<Font>);
+
 impl Plugin for PausePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
+        app.add_systems(OnEnter(GameState::Playing), cache_pause_font)
+            .add_systems(
                 Update,
                 handle_escape.run_if(in_state(GameState::Playing)),
             )
@@ -33,10 +37,14 @@ impl Plugin for PausePlugin {
     }
 }
 
+fn cache_pause_font(mut commands: Commands, asset_server: Res<AssetServer>) {
+    commands.insert_resource(PauseFontHandle(asset_server.load(FONT_PATH)));
+}
+
 fn handle_escape(
     keys: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
-    asset_server: Res<AssetServer>,
+    font_handle: Res<PauseFontHandle>,
     is_paused: Option<Res<IsPaused>>,
     mut virtual_time: ResMut<Time<Virtual>>,
     pause_ui_q: Query<Entity, With<PauseUI>>,
@@ -87,15 +95,13 @@ fn handle_escape(
     if is_paused.is_some() {
         do_resume(&mut commands, &mut virtual_time, &pause_ui_q);
     } else {
-        do_pause(&mut commands, &asset_server, &mut virtual_time);
+        do_pause(&mut commands, font_handle.0.clone(), &mut virtual_time);
     }
 }
 
-fn do_pause(commands: &mut Commands, assets: &AssetServer, time: &mut Time<Virtual>) {
+fn do_pause(commands: &mut Commands, font: Handle<Font>, time: &mut Time<Virtual>) {
     time.pause();
     commands.insert_resource(IsPaused);
-
-    let font: Handle<Font> = assets.load(FONT_PATH);
 
     commands
         .spawn((

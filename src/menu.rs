@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy::app::AppExit;
 
-use crate::{GameState, GameMusicVolume, MusicTrack, PlanetLevelMarker};
+use crate::{GameState, GameMusicVolume, MusicTrack, PlanetLevelMarker, TestRoomMarker};
 use crate::settings;
 
 pub struct MenuPlugin;
@@ -24,6 +24,7 @@ struct MenuUI;
 enum MenuButton {
     Play,
     PlayPlanet,
+    TestRoom,
     Credits,
     Settings,
     Quit,
@@ -100,6 +101,29 @@ fn setup_menu(
                         MenuButton::Play,
                         ImageNode::new(assets.load("menu/Title_Play.png")),
                     ));
+
+                    // Table Test Room button
+                    col.spawn((
+                        Button,
+                        MenuButton::TestRoom,
+                        Node {
+                            width: Val::Px(420.0),
+                            height: Val::Px(60.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            padding: UiRect::all(Val::Px(8.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.15, 0.1, 0.0, 0.8)),
+                        BorderColor(Color::srgba(1.0, 0.7, 0.2, 0.5)),
+                        BorderRadius::all(Val::Px(6.0)),
+                    ))
+                    .with_children(|b| {
+                        b.spawn((
+                            Text::new("Test Room"),
+                            TextFont { font_size: 28.0, ..default() },
+                        ));
+                    });
 
                     // Planet Test Button
                     col.spawn((
@@ -194,7 +218,7 @@ fn setup_menu(
                             "Controls",
                             "WASD — Move          Shift — Dash",
                             "Left Click — Shoot",
-                            "B — Broom (sweep, deflect bullets, fix windows)",
+                            "Right Click — Broom (sweeps toward mouse, deflects bullets, fixes windows)",
                             "Tab — Toggle Minimap",
                             "M — Toggle Music       Esc — Pause",
                         ] {
@@ -248,7 +272,11 @@ fn handle_buttons(
     mut interactions: Query<(&Interaction, &MenuButton, Entity), (Changed<Interaction>, With<Button>)>,
     mut next_state: ResMut<NextState<GameState>>,
     mut app_exit: EventWriter<AppExit>,
+    settings_open: Option<Res<settings::SettingsOrigin>>,
 ) {
+    // Block all menu input while the settings panel is open.
+    if settings_open.is_some() { return; }
+
     for (interaction, which, _button_entity) in &mut interactions {
         if *interaction != Interaction::Pressed {
             continue;
@@ -256,10 +284,14 @@ fn handle_buttons(
 
         match which {
             MenuButton::Play => {
-                next_state.set(GameState::Loading);
+                next_state.set(GameState::Setup);
             }
             MenuButton::PlayPlanet => {
                 commands.insert_resource(PlanetLevelMarker);
+                next_state.set(GameState::Loading);
+            }
+            MenuButton::TestRoom => {
+                commands.insert_resource(TestRoomMarker);
                 next_state.set(GameState::Loading);
             }
             MenuButton::Credits => {

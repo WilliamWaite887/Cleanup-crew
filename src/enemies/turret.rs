@@ -161,10 +161,7 @@ pub fn ai(
         let to_player = diff / dist;
         let accel = ENEMY_ACCEL * 0.4 * time.delta_secs();
 
-        let has_waypoints = pathfinder_opt.map_or(false, |pf| !pf.waypoints.is_empty());
-
-        if has_waypoints {
-            let wp = pathfinder_opt.unwrap().waypoints[0];
+        if let Some(wp) = pathfinder_opt.and_then(|pf| pf.waypoints.first().copied()) {
             let dir = (wp - enemy_pos).normalize_or_zero();
             vel.velocity = (vel.velocity + dir * accel).clamp_length_max(max_speed);
         } else {
