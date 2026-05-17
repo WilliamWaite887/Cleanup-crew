@@ -142,7 +142,7 @@ pub struct TestRoomMarker;
 pub struct PlanetCount(pub u32);
 
 /// The weapon the player selected on the setup screen. Used by spawn_player on fresh runs.
-#[derive(Resource, Clone, Copy, PartialEq, Eq)]
+#[derive(Resource, Clone, Copy, PartialEq)]
 pub struct SelectedWeapon(pub weapons::WeaponType);
 
 impl Default for SelectedWeapon {
