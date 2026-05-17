@@ -182,7 +182,7 @@ impl Plugin for PlanetPlugin {
             )
             .add_systems(
                 OnEnter(GameState::Playing),
-                (tint_planet_background, init_boss_arena_state, spawn_vault_rewards, spawn_boss_exit_door)
+                (tint_planet_background, init_boss_arena_state, spawn_vault_rewards, spawn_boss_exit_door, inject_test_planet_clues)
                     .run_if(resource_exists::<PlanetLevelMarker>),
             )
             .add_systems(
@@ -966,6 +966,7 @@ fn update_code_entry_ui(
     input: Res<ButtonInput<KeyCode>>,
     bindings: Res<crate::settings::KeyBindings>,
     time: Res<Time>,
+    player_q: Query<&Transform, With<Player>>,
     mut digit_q: Query<(&CodeDigitSlot, &mut Text, &mut TextColor)>,
     mut status_q: Query<(&mut Text, &mut TextColor), (With<CodeStatusText>, Without<CodeDigitSlot>)>,
     ui_q: Query<Entity, With<CodeEntryUi>>,
@@ -1044,11 +1045,14 @@ fn update_code_entry_ui(
             let sig_a: u8 = random_range(1u8..=5u8);
             signals.signals[0] = Some(sig_a);
             let font: Handle<Font> = asset_server.load(FONT_PATH);
+            let popup_pos = player_q.single()
+                .map(|tf| tf.translation + Vec3::new(0.0, TILE_SIZE * 2.0, 100.0))
+                .unwrap_or(Vec3::new(0.0, 60.0, 100.0));
             commands.spawn((
                 Text2d::new(format!("Signal Strength A: {}", sig_a)),
                 TextFont { font, font_size: 20.0, ..default() },
                 TextColor(Color::srgb(0.2, 1.0, 0.5)),
-                Transform::from_translation(Vec3::new(0.0, 60.0, 100.0)),
+                Transform::from_translation(popup_pos),
                 crate::rewards::RewardPopup { timer: Timer::from_seconds(3.0, TimerMode::Once) },
                 GameEntity,
             ));
@@ -1075,6 +1079,24 @@ fn close_keypad(commands: &mut Commands, ui_q: &Query<Entity, With<CodeEntryUi>>
 
 fn init_planet_signals(mut commands: Commands) {
     commands.insert_resource(PlanetSignals::default());
+}
+
+// ── Test-mode clue injection ─────────────────────────────────────────────────
+// When jumping straight to the planet from the menu (no station run), all clue
+// slots are None. Inject known fixed values so every terminal can be solved:
+//   Code door  : 1 – 2 – 3
+//   Color term : RED – GRN – BLU
+//   Symbol term: ▲ – ● – ■
+
+fn inject_test_planet_clues(
+    mut codes: ResMut<StationCodes>,
+    mut colors: ResMut<StationColors>,
+    mut symbols: ResMut<StationSymbols>,
+) {
+    if symbols.symbols.iter().any(|s| s.is_some()) { return; }
+    codes.codes     = [Some(1), Some(2), Some(3)];
+    colors.colors   = [Some(0), Some(1), Some(2)];
+    symbols.symbols = [Some(0), Some(1), Some(2)];
 }
 
 // ── Terminal helpers ──────────────────────────────────────────────────────────
@@ -1277,6 +1299,7 @@ fn update_terminal_ui(
     input: Res<ButtonInput<KeyCode>>,
     bindings: Res<crate::settings::KeyBindings>,
     time: Res<Time>,
+    player_q: Query<&Transform, With<Player>>,
     mut slot_q: Query<(&TerminalSlot, &mut Text, &mut TextColor)>,
     mut status_q: Query<(&mut Text, &mut TextColor), (With<TerminalStatusText>, Without<TerminalSlot>)>,
     ui_q: Query<Entity, With<TerminalUi>>,
@@ -1347,6 +1370,9 @@ fn update_terminal_ui(
         if correct {
             let terminal_entity = state.terminal_entity;
             let font: Handle<Font> = asset_server.load(FONT_PATH);
+            let popup_pos = player_q.single()
+                .map(|tf| tf.translation + Vec3::new(0.0, TILE_SIZE * 2.0, 100.0))
+                .unwrap_or(Vec3::new(0.0, 60.0, 100.0));
 
             match kind {
                 TerminalKind::Color => {
@@ -1364,7 +1390,7 @@ fn update_terminal_ui(
                         Text2d::new(format!("Signal Strength B: {}", sig)),
                         TextFont { font, font_size: 20.0, ..default() },
                         TextColor(Color::srgb(1.0, 0.5, 0.2)),
-                        Transform::from_translation(Vec3::new(0.0, 60.0, 100.0)),
+                        Transform::from_translation(popup_pos),
                         crate::rewards::RewardPopup { timer: Timer::from_seconds(3.0, TimerMode::Once) },
                         GameEntity,
                     ));
@@ -1384,7 +1410,7 @@ fn update_terminal_ui(
                         Text2d::new(format!("Signal Strength C: {}", sig)),
                         TextFont { font, font_size: 20.0, ..default() },
                         TextColor(Color::srgb(0.8, 0.3, 1.0)),
-                        Transform::from_translation(Vec3::new(0.0, 60.0, 100.0)),
+                        Transform::from_translation(popup_pos),
                         crate::rewards::RewardPopup { timer: Timer::from_seconds(3.0, TimerMode::Once) },
                         GameEntity,
                     ));
@@ -1401,7 +1427,7 @@ fn update_terminal_ui(
                         Text2d::new("Boss Arena Unlocked!"),
                         TextFont { font, font_size: 24.0, ..default() },
                         TextColor(Color::srgb(0.2, 1.0, 0.4)),
-                        Transform::from_translation(Vec3::new(0.0, 60.0, 100.0)),
+                        Transform::from_translation(popup_pos),
                         crate::rewards::RewardPopup { timer: Timer::from_seconds(3.0, TimerMode::Once) },
                         GameEntity,
                     ));
