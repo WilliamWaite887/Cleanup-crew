@@ -235,6 +235,7 @@ fn spawn_player(
     level: Res<LevelRes>,
     grid: Res<MapGridMeta>,
     saved_buffs: Option<Res<crate::SavedPlayerBuffs>>,
+    selected_weapon: Option<Res<crate::SelectedWeapon>>,
 ) {
     let (image, layout) = &player_sheet.down;
 
@@ -308,7 +309,10 @@ fn spawn_player(
             WeaponInventory { weapons: weapons_vec, equipped: 0 }
         }
     } else {
-        WeaponInventory::new(Weapon::new(WeaponType::Zapper))
+        let weapon_type = selected_weapon
+            .map(|r| r.0)
+            .unwrap_or(WeaponType::Zapper);
+        WeaponInventory::new(Weapon::new(weapon_type))
     };
 
     commands.spawn((

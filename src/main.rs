@@ -35,6 +35,7 @@ pub mod station_code;
 pub mod station_color;
 pub mod station_symbol;
 pub mod air_particles;
+pub mod setup;
 
 pub const FONT_PATH: &str = "fonts/BitcountSingleInk-VariableFont_CRSV,ELSH,ELXP,SZP1,SZP2,XPN1,XPN2,YPN1,YPN2,slnt,wght.ttf";
 pub const SYMBOL_FONT_PATH: &str = "fonts/NotoSansMono-VariableFont_wdth,wght.ttf";
@@ -140,6 +141,23 @@ pub struct TestRoomMarker;
 #[derive(Resource, Default)]
 pub struct PlanetCount(pub u32);
 
+/// The weapon the player selected on the setup screen. Used by spawn_player on fresh runs.
+#[derive(Resource, Clone, Copy, PartialEq, Eq)]
+pub struct SelectedWeapon(pub weapons::WeaponType);
+
+impl Default for SelectedWeapon {
+    fn default() -> Self { Self(weapons::WeaponType::Zapper) }
+}
+
+/// The run the player selected on the setup screen (0 = "Run 1"). No gameplay effect yet.
+#[derive(Resource, Clone, Copy, Default)]
+pub struct SelectedRun(pub u32);
+
+/// Whether the player has ever unlocked the Beam Rifle (by opening the planet chest).
+/// Persisted to config.ron so it survives between sessions.
+#[derive(Resource, Clone, Copy)]
+pub struct BeamRifleUnlocked(pub bool);
+
 /// Per-weapon state saved between stations.
 #[derive(Clone)]
 pub struct SavedWeapon {
@@ -189,6 +207,7 @@ pub struct StationLevelDisplay;
 enum GameState {
     #[default]
     Menu,
+    Setup,
     Loading,
     Playing,
     GameOver,
@@ -200,6 +219,7 @@ enum GameState {
 fn main() {
     crash_log::install();
     let (saved_volume, saved_mode, saved_bindings) = settings::load_config();
+    let beam_rifle_unlocked = settings::load_beam_rifle_unlock();
 
     App::new()
         .add_plugins(
@@ -231,8 +251,11 @@ fn main() {
         .init_resource::<ShowAirLabels>()
         .init_resource::<StationLevel>()
         .init_resource::<PlanetCount>()
+        .init_resource::<SelectedWeapon>()
+        .init_resource::<SelectedRun>()
         .insert_resource(saved_mode)
         .insert_resource(saved_bindings)
+        .insert_resource(BeamRifleUnlocked(beam_rifle_unlocked))
         .add_plugins((
             procgen::ProcGen,
             map::MapPlugin,
@@ -263,9 +286,11 @@ fn main() {
         .add_plugins((
             station_color::StationColorPlugin,
             station_symbol::StationSymbolPlugin,
+            setup::SetupPlugin,
         ))
         .add_systems(Startup, (setup_camera, rewards::load_reward_font))
         .add_systems(OnEnter(GameState::Menu), log_state_change)
+        .add_systems(OnEnter(GameState::Setup), log_state_change)
         .add_systems(OnEnter(GameState::Loading), log_state_change)
         .add_systems(OnEnter(GameState::EndCredits), log_state_change)
         .add_systems(OnEnter(GameState::Playing), log_state_change)

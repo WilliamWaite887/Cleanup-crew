@@ -280,7 +280,7 @@ fn handle_buttons(
 
         match which {
             MenuButton::Play => {
-                next_state.set(GameState::Loading);
+                next_state.set(GameState::Setup);
             }
             MenuButton::PlayPlanet => {
                 commands.insert_resource(PlanetLevelMarker);

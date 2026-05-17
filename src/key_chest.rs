@@ -152,6 +152,7 @@ fn interact_with_chest(
     mut inventory_q: Query<&mut crate::weapons::WeaponInventory, With<Player>>,
     buff_stacks_q: Query<&WeaponBuffStacks, With<Player>>,
     bindings: Res<crate::settings::KeyBindings>,
+    mut unlocked: ResMut<crate::BeamRifleUnlocked>,
 ) {
     if !input.just_pressed(bindings.interact) { return; }
     if !key_state.has_key { return; }
@@ -184,6 +185,11 @@ fn interact_with_chest(
                     }
                     inv.weapons.push(new_weapon);
                 }
+            }
+            // Permanently unlock Beam Rifle for future run selection.
+            if !unlocked.0 {
+                unlocked.0 = true;
+                crate::settings::save_beam_rifle_unlock();
             }
             break;
         }

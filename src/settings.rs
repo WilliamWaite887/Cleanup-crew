@@ -247,11 +247,37 @@ struct Config {
     window_mode_index: u8,
     #[serde(default)]
     key_bindings: KeyBindings,
+    #[serde(default)]
+    beam_rifle_unlocked: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { volume: 0.5, window_mode_index: 1, key_bindings: KeyBindings::default() }
+        Self { volume: 0.5, window_mode_index: 1, key_bindings: KeyBindings::default(), beam_rifle_unlocked: false }
+    }
+}
+
+fn load_config_raw() -> Config {
+    let path = config_path();
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| ron::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+pub fn load_beam_rifle_unlock() -> bool {
+    load_config_raw().beam_rifle_unlocked
+}
+
+pub fn save_beam_rifle_unlock() {
+    let mut cfg = load_config_raw();
+    cfg.beam_rifle_unlocked = true;
+    if let Ok(s) = ron::to_string(&cfg) {
+        let path = config_path();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(path, s);
     }
 }
 
@@ -263,11 +289,7 @@ fn config_path() -> PathBuf {
 }
 
 pub fn load_config() -> (f32, GameWindowMode, KeyBindings) {
-    let path = config_path();
-    let cfg: Config = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| ron::from_str(&s).ok())
-        .unwrap_or_default();
+    let cfg = load_config_raw();
 
     let mode = match cfg.window_mode_index {
         0 => GameWindowMode::Windowed,
@@ -286,6 +308,7 @@ fn save_config(volume: f32, mode: GameWindowMode, bindings: &KeyBindings) {
             GameWindowMode::Fullscreen => 2,
         },
         key_bindings: bindings.clone(),
+        beam_rifle_unlocked: load_config_raw().beam_rifle_unlocked,
     };
     if let Ok(s) = ron::to_string(&cfg) {
         let path = config_path();

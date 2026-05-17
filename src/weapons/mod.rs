@@ -20,7 +20,7 @@ pub struct Weapon {
     pub piercing_pickups: u32,
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum WeaponType {
     Zapper,
     BeamRifle,
