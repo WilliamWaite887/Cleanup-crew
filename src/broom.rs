@@ -67,6 +67,8 @@ pub fn broom_hit_bullets_system(
 
 fn broom_input(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    bindings: Res<crate::settings::KeyBindings>,
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     player_query: Query<&Transform, (With<Player>, Without<Broom>)>,
@@ -74,7 +76,7 @@ fn broom_input(
     q_window: Query<&bevy::window::Window, With<PrimaryWindow>>,
     q_camera: Query<(&Camera, &GlobalTransform)>,
 ) {
-    if !mouse_buttons.just_pressed(MouseButton::Right) || !broom_q.is_empty() {
+    if !bindings.broom.just_pressed(&keys, &mouse_buttons) || !broom_q.is_empty() {
         return;
     }
 

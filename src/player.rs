@@ -9,7 +9,7 @@ use crate::enemies::HitAnimation;
 use crate::map::{LevelRes, MapGridMeta};
 use crate::fluiddynamics::PulledByFluid;
 use crate::bullet::{Bullet, Velocity};
-use crate::weapons::{Weapon, WeaponType, WeaponInventory, fire_weapon, BulletRes, WeaponSounds, BeamRifleRes};
+use crate::weapons::{Weapon, WeaponType, WeaponInventory};
 const WALL_SLIDE_FRICTION_MULTIPLIER: f32 = 0.92; // lower is more friction
 
 // #[derive(Resource)]
@@ -358,25 +358,19 @@ fn debug_end_credits(
 fn move_player(
     time: Res<Time>,
     input: Res<ButtonInput<KeyCode>>,
-    buttons: Res<ButtonInput<MouseButton>>,
-    mut player: Query<(&mut Transform, &mut Velocity, &mut Facing, &MoveSpeed, &mut WeaponInventory), With<Player>>,
+    mut player: Query<(&mut Transform, &mut Velocity, &mut Facing, &MoveSpeed), With<Player>>,
     // Excludes permanent wall tiles and tables — tables are handled by player_deflects_tables.
     colliders: Query<(&Transform, &Collider), (With<Collidable>, Without<Player>, Without<Bullet>, Without<Broom>, Without<crate::map::WallTile>, Without<table::Table>)>,
     wall_grid: Res<crate::map::WallGrid>,
-    mut commands: Commands,
-    bullet_res: Res<BulletRes>,
-    beam_res: Res<BeamRifleRes>,
-    weapon_sounds: Res<WeaponSounds>,
     grid_query: Query<&crate::fluiddynamics::FluidGrid>,
     bindings: Res<crate::settings::KeyBindings>,
-    mut sfx_cooldown: ResMut<crate::weapons::SfxCooldown>,
     code_session: Option<Res<crate::planet::CodeEntryState>>,
     term_session: Option<Res<crate::planet::TerminalSession>>,
 ) {
     let Ok(grid) = grid_query.single() else {
         return;
     };
-    let Ok((mut transform, mut velocity, mut facing, spd, mut inventory)) = player.single_mut() else {
+    let Ok((mut transform, mut velocity, mut facing, spd)) = player.single_mut() else {
         return;
     };
 
@@ -416,30 +410,6 @@ fn move_player(
         facing.0 = FacingDirection::DownLeft;
     }
 
-
-    if input.pressed(bindings.shoot) && inventory.current().can_shoot() && !buttons.pressed(MouseButton::Left) {
-        let bullet_dir = match facing.0 {
-            FacingDirection::Up => Vec2::new(0.0, 1.0),
-            FacingDirection::UpRight => Vec2::new(1.0, 1.0),
-            FacingDirection::UpLeft => Vec2::new(-1.0, 1.0),
-            FacingDirection::Down => Vec2::new(0.0, -1.0),
-            FacingDirection::DownRight => Vec2::new(1.0, -1.0),
-            FacingDirection::DownLeft => Vec2::new(-1.0, -1.0),
-            FacingDirection::Left => Vec2::new(-1.0, 0.0),
-            FacingDirection::Right => Vec2::new(1.0, 0.0),
-        };
-
-        fire_weapon(
-            &mut commands,
-            &mut inventory,
-            &bullet_res,
-            &beam_res,
-            &weapon_sounds,
-            &mut sfx_cooldown,
-            transform.translation.truncate(),
-            bullet_dir,
-        );
-    }
 
     //Time based on frame to ensure that movement is the same no matter the fps
     let deltat = time.delta_secs();

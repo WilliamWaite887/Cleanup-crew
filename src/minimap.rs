@@ -410,7 +410,7 @@ fn toggle_minimap(
     mut root_q: Query<&mut Visibility, With<MinimapRoot>>,
     bindings: Res<crate::settings::KeyBindings>,
 ) {
-    if !keys.just_pressed(bindings.toggle_minimap) {
+    if !keys.just_pressed(bindings.inventory) {
         return;
     }
     visible.0 = !visible.0;

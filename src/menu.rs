@@ -272,7 +272,11 @@ fn handle_buttons(
     mut interactions: Query<(&Interaction, &MenuButton, Entity), (Changed<Interaction>, With<Button>)>,
     mut next_state: ResMut<NextState<GameState>>,
     mut app_exit: EventWriter<AppExit>,
+    settings_open: Option<Res<settings::SettingsOrigin>>,
 ) {
+    // Block all menu input while the settings panel is open.
+    if settings_open.is_some() { return; }
+
     for (interaction, which, _button_entity) in &mut interactions {
         if *interaction != Interaction::Pressed {
             continue;

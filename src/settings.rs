@@ -61,39 +61,72 @@ impl GameWindowMode {
 
 // ── KeyBindings ───────────────────────────────────────────────────────────────
 
+/// A binding that can be either a keyboard key or a mouse button.
+#[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum InputBinding {
+    Key(KeyCode),
+    Mouse(MouseButton),
+}
+
+impl InputBinding {
+    pub fn display(self) -> &'static str {
+        match self {
+            Self::Key(k) => KeyBindings::display_name(k),
+            Self::Mouse(MouseButton::Left)   => "Left Click",
+            Self::Mouse(MouseButton::Right)  => "Right Click",
+            Self::Mouse(MouseButton::Middle) => "Mid Click",
+            Self::Mouse(_)                   => "Mouse ?",
+        }
+    }
+
+    pub fn pressed(self, keys: &ButtonInput<KeyCode>, mouse: &ButtonInput<MouseButton>) -> bool {
+        match self {
+            Self::Key(k)   => keys.pressed(k),
+            Self::Mouse(b) => mouse.pressed(b),
+        }
+    }
+
+    pub fn just_pressed(self, keys: &ButtonInput<KeyCode>, mouse: &ButtonInput<MouseButton>) -> bool {
+        match self {
+            Self::Key(k)   => keys.just_pressed(k),
+            Self::Mouse(b) => mouse.just_pressed(b),
+        }
+    }
+}
+
 /// All remappable player actions. Each field stores the KeyCode currently bound to that action.
 /// Serialized into config.ron so bindings persist between sessions.
 #[derive(Resource, Clone, serde::Serialize, serde::Deserialize)]
 pub struct KeyBindings {
-    pub move_left:      KeyCode,
-    pub move_right:     KeyCode,
-    pub move_up:        KeyCode,
-    pub move_down:      KeyCode,
-    pub dash:           KeyCode,
-    pub shoot:          KeyCode,
-    pub swap_weapon:    KeyCode,
-    pub interact:       KeyCode,
-    pub toggle_minimap:    KeyCode,
-    pub toggle_music:      KeyCode,
-    pub pause:             KeyCode,
-    pub toggle_inventory:  KeyCode,
+    pub move_left:   KeyCode,
+    pub move_right:  KeyCode,
+    pub move_up:     KeyCode,
+    pub move_down:   KeyCode,
+    pub dash:        KeyCode,
+    pub swap_weapon: KeyCode,
+    pub interact:    KeyCode,
+    pub inventory:   KeyCode,
+    pub toggle_music: KeyCode,
+    pub pause:        KeyCode,
+    pub shoot: InputBinding,
+    pub broom: InputBinding,
 }
 
 impl Default for KeyBindings {
     fn default() -> Self {
         Self {
-            move_left:      KeyCode::KeyA,
-            move_right:     KeyCode::KeyD,
-            move_up:        KeyCode::KeyW,
-            move_down:      KeyCode::KeyS,
-            dash:           KeyCode::ShiftLeft,
-            shoot:          KeyCode::Space,
-            swap_weapon:    KeyCode::KeyQ,
-            interact:       KeyCode::KeyE,
-            toggle_minimap:   KeyCode::Tab,
-            toggle_music:     KeyCode::KeyM,
-            pause:            KeyCode::Escape,
-            toggle_inventory: KeyCode::KeyI,
+            move_left:    KeyCode::KeyA,
+            move_right:   KeyCode::KeyD,
+            move_up:      KeyCode::KeyW,
+            move_down:    KeyCode::KeyS,
+            dash:         KeyCode::ShiftLeft,
+            swap_weapon:  KeyCode::KeyQ,
+            interact:     KeyCode::KeyE,
+            inventory:    KeyCode::Tab,
+            toggle_music: KeyCode::KeyM,
+            pause:        KeyCode::Escape,
+            shoot: InputBinding::Mouse(MouseButton::Left),
+            broom: InputBinding::Mouse(MouseButton::Right),
         }
     }
 }
@@ -102,36 +135,56 @@ impl KeyBindings {
     /// Returns the key bound to the given action.
     pub fn key_for(&self, action: BindableAction) -> KeyCode {
         match action {
-            BindableAction::MoveLeft      => self.move_left,
-            BindableAction::MoveRight     => self.move_right,
-            BindableAction::MoveUp        => self.move_up,
-            BindableAction::MoveDown      => self.move_down,
-            BindableAction::Dash          => self.dash,
-            BindableAction::Shoot         => self.shoot,
-            BindableAction::SwapWeapon    => self.swap_weapon,
-            BindableAction::Interact      => self.interact,
-            BindableAction::ToggleMinimap   => self.toggle_minimap,
-            BindableAction::ToggleMusic     => self.toggle_music,
-            BindableAction::Pause           => self.pause,
-            BindableAction::ToggleInventory => self.toggle_inventory,
+            BindableAction::MoveLeft    => self.move_left,
+            BindableAction::MoveRight   => self.move_right,
+            BindableAction::MoveUp      => self.move_up,
+            BindableAction::MoveDown    => self.move_down,
+            BindableAction::Dash        => self.dash,
+            BindableAction::SwapWeapon  => self.swap_weapon,
+            BindableAction::Interact    => self.interact,
+            BindableAction::Inventory   => self.inventory,
+            BindableAction::ToggleMusic => self.toggle_music,
+            BindableAction::Pause       => self.pause,
+            BindableAction::Shoot | BindableAction::Broom => unreachable!("use binding_for() for Shoot/Broom"),
         }
     }
 
     /// Rebinds the given action to a new key.
     pub fn set_key(&mut self, action: BindableAction, key: KeyCode) {
         match action {
-            BindableAction::MoveLeft        => self.move_left        = key,
-            BindableAction::MoveRight       => self.move_right       = key,
-            BindableAction::MoveUp          => self.move_up          = key,
-            BindableAction::MoveDown        => self.move_down        = key,
-            BindableAction::Dash            => self.dash             = key,
-            BindableAction::Shoot           => self.shoot            = key,
-            BindableAction::SwapWeapon      => self.swap_weapon      = key,
-            BindableAction::Interact        => self.interact         = key,
-            BindableAction::ToggleMinimap   => self.toggle_minimap   = key,
-            BindableAction::ToggleMusic     => self.toggle_music     = key,
-            BindableAction::Pause           => self.pause            = key,
-            BindableAction::ToggleInventory => self.toggle_inventory = key,
+            BindableAction::MoveLeft    => self.move_left    = key,
+            BindableAction::MoveRight   => self.move_right   = key,
+            BindableAction::MoveUp      => self.move_up      = key,
+            BindableAction::MoveDown    => self.move_down    = key,
+            BindableAction::Dash        => self.dash         = key,
+            BindableAction::SwapWeapon  => self.swap_weapon  = key,
+            BindableAction::Interact    => self.interact     = key,
+            BindableAction::Inventory   => self.inventory    = key,
+            BindableAction::ToggleMusic => self.toggle_music = key,
+            BindableAction::Pause       => self.pause        = key,
+            BindableAction::Shoot | BindableAction::Broom => {}
+        }
+    }
+
+    /// Returns the binding for any action (wraps keyboard actions in InputBinding::Key).
+    pub fn binding_for(&self, action: BindableAction) -> InputBinding {
+        match action {
+            BindableAction::Shoot => self.shoot,
+            BindableAction::Broom => self.broom,
+            _ => InputBinding::Key(self.key_for(action)),
+        }
+    }
+
+    /// Rebinds any action — keyboard-only actions ignore Mouse bindings.
+    pub fn set_binding(&mut self, action: BindableAction, binding: InputBinding) {
+        match action {
+            BindableAction::Shoot => self.shoot = binding,
+            BindableAction::Broom => self.broom = binding,
+            _ => {
+                if let InputBinding::Key(k) = binding {
+                    self.set_key(action, k);
+                }
+            }
         }
     }
 
@@ -189,26 +242,27 @@ pub const REBINDABLE_KEYS: &[KeyCode] = &[
 /// Each variant mirrors one field in KeyBindings.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BindableAction {
+    Shoot, Broom,
     MoveLeft, MoveRight, MoveUp, MoveDown,
-    Dash, Shoot, SwapWeapon, Interact,
-    ToggleMinimap, ToggleMusic, Pause, ToggleInventory,
+    Dash, SwapWeapon, Interact,
+    Inventory, ToggleMusic, Pause,
 }
 
 impl BindableAction {
     fn label(self) -> &'static str {
         match self {
-            Self::MoveLeft      => "Move Left",
-            Self::MoveRight     => "Move Right",
-            Self::MoveUp        => "Move Up",
-            Self::MoveDown      => "Move Down",
-            Self::Dash          => "Dash",
-            Self::Shoot         => "Shoot",
-            Self::SwapWeapon    => "Swap Weapon",
-            Self::Interact      => "Interact",
-            Self::ToggleMinimap   => "Toggle Minimap",
-            Self::ToggleMusic     => "Toggle Music",
-            Self::Pause           => "Pause",
-            Self::ToggleInventory => "Toggle Inventory",
+            Self::Shoot       => "Shoot",
+            Self::Broom       => "Broom",
+            Self::MoveLeft    => "Move Left",
+            Self::MoveRight   => "Move Right",
+            Self::MoveUp      => "Move Up",
+            Self::MoveDown    => "Move Down",
+            Self::Dash        => "Dash",
+            Self::SwapWeapon  => "Swap Weapon",
+            Self::Interact    => "Interact",
+            Self::Inventory   => "Inventory",
+            Self::ToggleMusic => "Toggle Music",
+            Self::Pause       => "Pause",
         }
     }
 }
@@ -633,12 +687,12 @@ fn sync_window_mode(
 // ── Controls overlay ──────────────────────────────────────────────────────────
 
 const ALL_ACTIONS: &[BindableAction] = &[
-    BindableAction::MoveLeft,  BindableAction::MoveRight,
-    BindableAction::MoveUp,    BindableAction::MoveDown,
-    BindableAction::Dash,      BindableAction::Shoot,
-    BindableAction::SwapWeapon, BindableAction::Interact,
-    BindableAction::ToggleMinimap, BindableAction::ToggleMusic,
-    BindableAction::Pause, BindableAction::ToggleInventory,
+    BindableAction::Shoot,      BindableAction::Broom,
+    BindableAction::MoveLeft,   BindableAction::MoveRight,
+    BindableAction::MoveUp,     BindableAction::MoveDown,
+    BindableAction::Dash,       BindableAction::SwapWeapon,
+    BindableAction::Interact,   BindableAction::Inventory,
+    BindableAction::ToggleMusic, BindableAction::Pause,
 ];
 
 pub fn open_controls(commands: &mut Commands, assets: &AssetServer, bindings: &KeyBindings) {
@@ -684,7 +738,7 @@ pub fn open_controls(commands: &mut Commands, assets: &AssetServer, bindings: &K
 
                 // One row per action
                 for &action in ALL_ACTIONS {
-                    spawn_binding_row(panel, font.clone(), action, bindings.key_for(action));
+                    spawn_binding_row(panel, font.clone(), action, bindings.binding_for(action));
                 }
 
                 // Back button
@@ -719,7 +773,7 @@ fn spawn_binding_row(
     parent: &mut ChildSpawnerCommands,
     font: Handle<Font>,
     action: BindableAction,
-    current_key: KeyCode,
+    current_binding: InputBinding,
 ) {
     parent
         .spawn((Node {
@@ -759,7 +813,7 @@ fn spawn_binding_row(
             ))
             .with_children(|b| {
                 b.spawn((
-                    Text::new(KeyBindings::display_name(current_key)),
+                    Text::new(current_binding.display()),
                     TextFont { font, font_size: 20.0, ..default() },
                     TextColor(Color::WHITE),
                     BindingLabel(action),
@@ -799,14 +853,23 @@ fn handle_controls_buttons(
 
 fn listen_for_key(
     keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
     mut binding_state: ResMut<BindingState>,
     mut bindings: ResMut<KeyBindings>,
 ) {
     let Some(action) = binding_state.listening_for else { return };
 
+    // Mouse buttons first (Left, Right, Middle)
+    for &btn in mouse.get_just_pressed() {
+        bindings.set_binding(action, InputBinding::Mouse(btn));
+        binding_state.listening_for = None;
+        return;
+    }
+
+    // Then keyboard keys
     for &key in keys.get_just_pressed() {
         if REBINDABLE_KEYS.contains(&key) {
-            bindings.set_key(action, key);
+            bindings.set_binding(action, InputBinding::Key(key));
             binding_state.listening_for = None;
             return;
         }
@@ -826,7 +889,7 @@ fn sync_controls_ui(
         if binding_state.listening_for == Some(lbl.0) {
             *text = Text::new("...");
         } else {
-            *text = Text::new(KeyBindings::display_name(bindings.key_for(lbl.0)));
+            *text = Text::new(bindings.binding_for(lbl.0).display());
         }
     }
 
