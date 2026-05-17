@@ -212,20 +212,6 @@ pub fn assign_doors(
     }
 }
 
-// pub fn assign_tables(
-//     tables: Query<(Entity, &Transform), With<ATABLE>>,
-//     mut rooms: ResMut<RoomVec>,
-// ){
-//     for (entity, pos) in tables.iter(){
-//         for room in rooms.0.iter_mut(){
-//             if room.bounds_check(Vec2::new(pos.translation.x, pos.translation.y)) {
-//                 room.tables.push(entity);
-//                 break;
-//             }
-//         }
-//     }
-// }
-
 pub fn track_rooms(
     player: Single<&Transform, With<Player>>,
     mut rooms: ResMut<RoomVec>,
@@ -408,10 +394,10 @@ pub fn generate_enemies_in_room(
     // Speed bonus: +10 units per room cleared, giving a gradual ramp-up
     let speed_bonus = rooms_cleared as f32 * 10.0;
 
-    let height = room.layout.len() - 6;
-    if height <= 0 { return None; }
-    
-    let width = room.layout[0].len() - 6;
+    let Some(height) = room.layout.len().checked_sub(6) else { return None; };
+    if height == 0 { return None; }
+
+    let Some(width) = room.layout[0].len().checked_sub(6) else { return None; };
 
     for ly in 5..height {
         let row = &room.layout[ly];

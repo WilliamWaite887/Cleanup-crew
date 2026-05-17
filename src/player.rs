@@ -12,17 +12,11 @@ use crate::bullet::{Bullet, Velocity};
 use crate::weapons::{Weapon, WeaponType, WeaponInventory};
 const WALL_SLIDE_FRICTION_MULTIPLIER: f32 = 0.92; // lower is more friction
 
-// #[derive(Resource)]
-// pub struct PlayerLaserSound(Handle<AudioSource>);
+#[derive(Component)]
+pub struct Player;
 
 #[derive(Component)]
-pub struct Player;           
-
-#[derive(Component)]
-pub struct NumOfCleared(pub usize);  
-
-// #[derive(Component, Deref, DerefMut)]
-// pub struct Velocity(Vec2);
+pub struct NumOfCleared(pub usize);
 
 #[derive(Resource)]
 pub struct PlayerRes{
@@ -99,20 +93,8 @@ pub struct WeaponBuffStacks {
     pub piercing: u32,
 }
 
-// #[derive(Resource)]
-// pub struct BulletRes(Handle<Image>, Handle<TextureAtlasLayout>);
-
-// #[derive(Resource)]
-// pub struct ShootTimer(pub Timer);
-
 #[derive(Component, Deref, DerefMut)]
 pub struct DamageTimer(pub Timer);
-
-// #[derive(Component, Deref, DerefMut)]
-// pub struct AnimationTimer(Timer);
-
-// #[derive(Component, Deref, DerefMut)]
-// pub struct AnimationFrameCount(usize);
 
 #[derive(Component)]
 pub struct Facing(pub FacingDirection);
@@ -128,16 +110,6 @@ pub enum FacingDirection {
     Left,
     Right,
 }
-
-//Creates an instance of a Velocity
-// impl Velocity {
-//     fn new() -> Self {
-//         Self(Vec2::ZERO)
-//     }
-//     fn new_vec(x: f32, y: f32) -> Self {
-//         Self(Vec2{x, y})
-//     }
-// }
 
 /// RoR2-style armor formula: returns the fraction of damage that gets through.
 /// armor=0 → 1.0 (full damage), armor=100 → 0.5, armor=200 → 0.33, etc.

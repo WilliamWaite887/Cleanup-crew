@@ -8,7 +8,7 @@ use crate::station_color::StationColors;
 use crate::station_symbol::StationSymbols;
 use crate::planet::PlanetSignals;
 use crate::weapons::WeaponInventory;
-use crate::{GameEntity, GameState, TILE_SIZE};
+use crate::{GameEntity, GameState, TILE_SIZE, FONT_PATH};
 
 const MINIMAP_W: f32 = 420.0;
 const MINIMAP_H: f32 = 420.0;
@@ -110,9 +110,7 @@ fn setup_minimap(
     let cols = grid.cols;
     let rows = grid.rows;
 
-    let font: Handle<Font> = asset_server.load(
-        "fonts/BitcountSingleInk-VariableFont_CRSV,ELSH,ELXP,SZP1,SZP2,XPN1,XPN2,YPN1,YPN2,slnt,wght.ttf",
-    );
+    let font: Handle<Font> = asset_server.load(FONT_PATH);
 
     // Precompute which coarse cells are hallway cells (floor tile outside every room).
     let mut hallway_cells: HashSet<(i32, i32)> = HashSet::new();
@@ -457,6 +455,13 @@ fn update_inventory_panel(
         *text = Text::new(format!("  {:<12}  +{}", label, count));
         *color = TextColor(if count > 0 { Color::srgb(0.4, 1.0, 0.5) } else { Color::srgb(0.5, 0.5, 0.5) });
     }
+
+    // Clue and key rows only change when pickups are collected — skip the
+    // format!/collect work every frame when nothing has changed.
+    let clues_changed = codes.is_changed() || colors.is_changed() || symbols.is_changed()
+        || signals.as_ref().map_or(false, |s| s.is_changed())
+        || key_state.as_ref().map_or(false, |k| k.is_changed());
+    if !clues_changed { return; }
 
     let color_names = ["RED", "GRN", "BLU", "YLW"];
     let symbol_chars = crate::station_symbol::SYMBOL_CHARS;

@@ -148,6 +148,10 @@ fn update_table_blocked_tiles(
 pub struct EnemyPathfinder {
     pub waypoints: Vec<Vec2>,
     timer: Timer,
+    // Scratch allocations reused each A* call to avoid per-frame heap pressure.
+    open: BinaryHeap<Reverse<(i32, (i32, i32))>>,
+    came_from: HashMap<(i32, i32), (i32, i32)>,
+    g: HashMap<(i32, i32), i32>,
 }
 
 impl EnemyPathfinder {
@@ -156,7 +160,13 @@ impl EnemyPathfinder {
         let offset = rand::random::<f32>() * PATH_RECOMPUTE_SECS;
         let mut timer = Timer::from_seconds(PATH_RECOMPUTE_SECS, TimerMode::Repeating);
         timer.set_elapsed(std::time::Duration::from_secs_f32(offset));
-        Self { waypoints: Vec::new(), timer }
+        Self {
+            waypoints: Vec::new(),
+            timer,
+            open: BinaryHeap::new(),
+            came_from: HashMap::new(),
+            g: HashMap::new(),
+        }
     }
 }
 
@@ -308,8 +318,15 @@ fn a_star(
     blocked: &HashSet<(i32, i32)>,
     max_nodes: usize,
     padding: i32,
+    open: &mut BinaryHeap<Reverse<(i32, (i32, i32))>>,
+    came_from: &mut HashMap<(i32, i32), (i32, i32)>,
+    g: &mut HashMap<(i32, i32), i32>,
 ) -> Vec<(i32, i32)> {
     if start == goal { return Vec::new(); }
+
+    open.clear();
+    came_from.clear();
+    g.clear();
 
     let min_c = start.0.min(goal.0) - padding;
     let max_c = start.0.max(goal.0) + padding;
@@ -320,9 +337,6 @@ fn a_star(
         10 * ((c - goal.0).abs() + (r - goal.1).abs())
     };
 
-    let mut open: BinaryHeap<Reverse<(i32, (i32, i32))>> = BinaryHeap::new();
-    let mut came_from: HashMap<(i32, i32), (i32, i32)> = HashMap::new();
-    let mut g: HashMap<(i32, i32), i32> = HashMap::new();
     let mut expanded = 0usize;
 
     g.insert(start, 0);
@@ -420,8 +434,10 @@ fn compute_enemy_paths(
         if has_los(start, goal, &wall_grid, blocked) {
             pathfinder.waypoints.clear();
         } else {
-            let tiles = a_star(start, goal, &wall_grid, blocked, PATH_MAX_NODES, PATH_SEARCH_PAD);
-            pathfinder.waypoints = tiles
+            let pf = &mut *pathfinder;
+            let tiles = a_star(start, goal, &wall_grid, blocked, PATH_MAX_NODES, PATH_SEARCH_PAD,
+                &mut pf.open, &mut pf.came_from, &mut pf.g);
+            pf.waypoints = tiles
                 .into_iter()
                 .map(|(c, r)| wall_grid.tile_to_world(c, r))
                 .collect();
