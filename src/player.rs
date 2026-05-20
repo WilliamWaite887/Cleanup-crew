@@ -339,6 +339,7 @@ fn move_player(
     bindings: Res<crate::settings::KeyBindings>,
     code_session: Option<Res<crate::planet::CodeEntryState>>,
     term_session: Option<Res<crate::planet::TerminalSession>>,
+    dial_session: Option<Res<crate::planet::DialInteractState>>,
 ) {
     let Ok(grid) = grid_query.single() else {
         return;
@@ -347,8 +348,8 @@ fn move_player(
         return;
     };
 
-    // Block all player input while a terminal or code door keypad is open.
-    if code_session.is_some() || term_session.is_some() { return; }
+    // Block all player input while any UI is open.
+    if code_session.is_some() || term_session.is_some() || dial_session.is_some() { return; }
 
     let mut dir: Vec2 = Vec2::ZERO;
 

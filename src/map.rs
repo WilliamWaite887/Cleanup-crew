@@ -11,7 +11,7 @@ use crate::room::*; // RoomRes, track_rooms
 use crate::window;
 use crate::{GameState, MainCamera, GameEntity, TILE_SIZE, WIN_H, WIN_W, Z_FLOOR};
 use crate::procgen::{ProcgenSet};
-use crate::planet::{CodeDoor, ColorTerminal, SymbolTerminal, FreqMaster};
+use crate::planet::{CodeDoor, ColorTerminal, SymbolTerminal, FreqMaster, DialButton, DialType, PlanetBossDoor, MiniBossGate};
 
 
 #[derive(Resource, Debug, Clone)]
@@ -266,6 +266,11 @@ pub fn setup_tilemap(
     let mut color_terminal_positions = Vec::new();
     let mut symbol_terminal_positions = Vec::new();
     let mut freq_master_positions = Vec::new();
+    let mut dial_code_positions:   Vec<Vec2> = Vec::new();
+    let mut dial_color_positions:  Vec<Vec2> = Vec::new();
+    let mut dial_symbol_positions: Vec<Vec2> = Vec::new();
+    let mut boss_door_positions:   Vec<Vec2> = Vec::new();
+    let mut mini_gate_positions:   Vec<Vec2> = Vec::new();
     let mut floor_strips: Vec<(Vec3, Vec2)> = Vec::new(); // (center, size)
 
     for (row_i, row) in level.level.iter().enumerate() {
@@ -335,6 +340,11 @@ pub fn setup_tilemap(
                 ('F', _, _) => {
                     freq_master_positions.push(Vec2::new(x, y));
                 }
+                ('B', _, _) => { dial_code_positions.push(Vec2::new(x, y)); }
+                ('N', _, _) => { dial_color_positions.push(Vec2::new(x, y)); }
+                ('M', _, _) => { dial_symbol_positions.push(Vec2::new(x, y)); }
+                ('P', _, _) => { boss_door_positions.push(Vec2::new(x, y)); }
+                ('X', _, _) => { mini_gate_positions.push(Vec2::new(x, y)); }
                 _ => {}
             }
         }
@@ -531,6 +541,75 @@ pub fn setup_tilemap(
             Collider { half_extents: Vec2::splat(TILE_SIZE * 0.5) },
             FreqMaster { unlocked: false },
             Name::new("FreqMaster"),
+            GameEntity,
+        ));
+    }
+
+    // Spawn code dials (B tiles) — gold tint, no collider (proximity interaction).
+    for &pos in &dial_code_positions {
+        let mut sprite = Sprite::from_image(tiles.closed_door.clone());
+        sprite.color = Color::srgb(0.6, 0.6, 0.1);
+        commands.spawn((
+            sprite,
+            Transform { translation: Vec3::new(pos.x, pos.y, z_from_y(pos.y)), scale: Vec3::ONE, ..Default::default() },
+            DialButton { dial_idx: 0, dial_type: DialType::Code, current: 0 },
+            Name::new("DialA"),
+            GameEntity,
+        ));
+    }
+
+    // Spawn color dials (N tiles) — amber tint, no collider.
+    for &pos in &dial_color_positions {
+        let mut sprite = Sprite::from_image(tiles.closed_door.clone());
+        sprite.color = Color::srgb(0.6, 0.3, 0.0);
+        commands.spawn((
+            sprite,
+            Transform { translation: Vec3::new(pos.x, pos.y, z_from_y(pos.y)), scale: Vec3::ONE, ..Default::default() },
+            DialButton { dial_idx: 1, dial_type: DialType::Color, current: 0 },
+            Name::new("DialB"),
+            GameEntity,
+        ));
+    }
+
+    // Spawn symbol dials (M tiles) — violet tint, no collider.
+    for &pos in &dial_symbol_positions {
+        let mut sprite = Sprite::from_image(tiles.closed_door.clone());
+        sprite.color = Color::srgb(0.5, 0.1, 0.6);
+        commands.spawn((
+            sprite,
+            Transform { translation: Vec3::new(pos.x, pos.y, z_from_y(pos.y)), scale: Vec3::ONE, ..Default::default() },
+            DialButton { dial_idx: 2, dial_type: DialType::Symbol, current: 0 },
+            Name::new("DialC"),
+            GameEntity,
+        ));
+    }
+
+    // Spawn planet boss doors (P tiles) — teal tint, collidable until all dials correct.
+    for &pos in &boss_door_positions {
+        let mut sprite = Sprite::from_image(tiles.closed_door.clone());
+        sprite.color = Color::srgb(0.1, 0.8, 0.9);
+        commands.spawn((
+            sprite,
+            Transform { translation: Vec3::new(pos.x, pos.y, z_from_y(pos.y)), scale: Vec3::ONE, ..Default::default() },
+            Collidable,
+            Collider { half_extents: Vec2::splat(TILE_SIZE * 0.5) },
+            PlanetBossDoor { ready: false },
+            Name::new("PlanetBossDoor"),
+            GameEntity,
+        ));
+    }
+
+    // Spawn mini boss gates (G tiles) — red tint, collidable until all dials correct.
+    for &pos in &mini_gate_positions {
+        let mut sprite = Sprite::from_image(tiles.closed_door.clone());
+        sprite.color = Color::srgb(0.9, 0.1, 0.1);
+        commands.spawn((
+            sprite,
+            Transform { translation: Vec3::new(pos.x, pos.y, z_from_y(pos.y)), scale: Vec3::ONE, ..Default::default() },
+            Collidable,
+            Collider { half_extents: Vec2::splat(TILE_SIZE * 0.5) },
+            MiniBossGate,
+            Name::new("MiniBossGate"),
             GameEntity,
         ));
     }

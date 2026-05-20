@@ -140,6 +140,11 @@ pub struct PlanetLevelMarker;
 #[derive(Resource)]
 pub struct TestRoomMarker;
 
+/// Inserted when launching a planet directly from the menu for testing.
+/// Enables invincibility and pre-loaded clues.
+#[derive(Resource)]
+pub struct TestPlanetMode;
+
 /// How many planet levels have been cleared this run.
 #[derive(Resource, Default)]
 pub struct PlanetCount(pub u32);
@@ -641,7 +646,9 @@ fn load_win(
 fn check_game_over(
     mut next_state: ResMut<NextState<GameState>>,
     player_q: Query<&Health, With<Player>>,
+    test_mode: Option<Res<TestPlanetMode>>,
 ) {
+    if test_mode.is_some() { return; }
     if let Ok(health) = player_q.single() {
         if health.0 <= 0.0 {
             debug!("Player health reached 0 — transitioning to GameOver!");

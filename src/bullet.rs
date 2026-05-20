@@ -133,12 +133,20 @@ pub fn move_bullets(
         (With<Bullet>, Without<MarkedForDespawn>),
     >,
     time: Res<Time>,
+    planet_marker: Option<Res<crate::PlanetLevelMarker>>,
 ) {
+    // Planet maps are 300×200 tiles (±4784 x, ±3184 y); station rooms are much smaller.
+    let (x_limit, y_limit) = if planet_marker.is_some() {
+        (5200.0_f32, 3600.0_f32)
+    } else {
+        (4000.0_f32, 4000.0_f32)
+    };
+
     for (entity, mut transform, vel) in bullet_q.iter_mut() {
         transform.translation += (vel.0 * time.delta_secs()).extend(0.0);
 
         let p = transform.translation;
-        if p.x.abs() > 4000.0 || p.y.abs() > 4000.0 {
+        if p.x.abs() > x_limit || p.y.abs() > y_limit {
             commands.entity(entity).try_insert(MarkedForDespawn);
         }
     }

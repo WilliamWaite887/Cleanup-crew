@@ -15,7 +15,8 @@ use crate::rewards::RewardRes;
 use rand::random_range;
 use crate::{
     EndScreenButtons, GameEntity, GameState, MainCamera, PlanetCount, PlanetLevelMarker,
-    StationLevel, FONT_PATH, SYMBOL_FONT_PATH, TILE_SIZE, WIN_H, WIN_W, Z_ENTITIES, Z_FLOOR,
+    StationLevel, TestPlanetMode, FONT_PATH, SYMBOL_FONT_PATH, TILE_SIZE, WIN_H, WIN_W,
+    Z_ENTITIES, Z_FLOOR,
 };
 use crate::player::{Player, aabb_overlap};
 
@@ -129,6 +130,8 @@ pub struct TerminalSession {
     entered: [u8; 3],
     cursor: usize,
     wrong_timer: Option<Timer>,
+    planet_idx: u32,
+    font: Handle<Font>,
 }
 
 /// Marker for the floating prompt near a terminal.
@@ -146,6 +149,77 @@ struct TerminalSlot(usize);
 /// Marker for the terminal status text line.
 #[derive(Component)]
 struct TerminalStatusText;
+
+// ── Dial system (Planet 2 & 3) ───────────────────────────────────────────────
+
+/// Dial targets generated when each terminal is solved on P2/P3.
+/// [0]=code dial target (0-9), [1]=color dial target (0-3), [2]=symbol dial target (0-5).
+#[derive(Resource, Default)]
+pub struct DialTargets {
+    pub targets: [Option<u8>; 3],
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum DialType {
+    Code,
+    Color,
+    Symbol,
+}
+
+/// A physical dial in an enemy room. dial_idx matches DialTargets index.
+#[derive(Component)]
+pub struct DialButton {
+    pub dial_idx:  usize,
+    pub dial_type: DialType,
+    pub current:   u8,
+}
+
+/// Active dial interaction session (resource present while dial UI is open).
+#[derive(Resource)]
+pub struct DialInteractState {
+    dial_entity: Entity,
+    dial_idx:    usize,
+    dial_type:   DialType,
+    current:     u8,
+}
+
+/// Marker for the dial UI overlay panel.
+#[derive(Component)]
+struct DialUi;
+
+/// Marker for the cycling value text inside the dial UI.
+#[derive(Component)]
+struct DialCurrentText;
+
+/// Marker for the floating prompt near a dial.
+#[derive(Component)]
+struct DialPrompt;
+
+/// Planet 2 boss door — E press opens when all dials are correctly set.
+#[derive(Component)]
+pub struct PlanetBossDoor {
+    pub ready: bool,
+}
+
+/// Floating prompt near the Planet 2 boss door.
+#[derive(Component)]
+struct PlanetBossDoorPrompt;
+
+/// Mini boss arena gate (Planet 3) — collidable wall removed when all dials correct.
+#[derive(Component)]
+pub struct MiniBossGate;
+
+/// Mini boss entity (Planet 3 only).
+#[derive(Component)]
+pub struct MiniBoss;
+
+/// Tracks the mini boss arena state on Planet 3.
+#[derive(Resource, PartialEq, Eq)]
+enum MiniBossArenaState {
+    Idle,
+    Active,
+    Done,
+}
 
 // ── Plugin ───────────────────────────────────────────────────────────────────
 
@@ -208,12 +282,30 @@ impl Plugin for PlanetPlugin {
             )
             .add_systems(
                 OnEnter(GameState::Playing),
-                init_planet_signals
+                init_planet_resources
                     .run_if(resource_exists::<PlanetLevelMarker>),
             )
             .add_systems(
                 Update,
-                (terminal_proximity, update_terminal_ui)
+                terminal_proximity
+                    .run_if(in_state(GameState::Playing))
+                    .run_if(resource_exists::<PlanetLevelMarker>),
+            )
+            .add_systems(
+                Update,
+                update_terminal_ui
+                    .run_if(in_state(GameState::Playing))
+                    .run_if(resource_exists::<PlanetLevelMarker>),
+            )
+            .add_systems(
+                Update,
+                (dial_proximity, update_dial_ui, check_all_dials, boss_door_proximity)
+                    .run_if(in_state(GameState::Playing))
+                    .run_if(resource_exists::<PlanetLevelMarker>),
+            )
+            .add_systems(
+                Update,
+                (mini_boss_arena_trigger, watch_mini_boss_death)
                     .run_if(in_state(GameState::Playing))
                     .run_if(resource_exists::<PlanetLevelMarker>),
             )
@@ -234,8 +326,8 @@ impl Plugin for PlanetPlugin {
 fn planet_map_file(planet_idx: usize) -> &'static str {
     match planet_idx {
         0 => "assets/planet/planet1_level.txt",
-        // Planets 2 and 3 reuse planet 1 until their maps are built.
-        _ => "assets/planet/planet1_level.txt",
+        1 => "assets/planet/planet2_level.txt",
+        _ => "assets/planet/planet3_level.txt",
     }
 }
 
@@ -245,14 +337,14 @@ fn planet_boss_spawn(planet_idx: usize) -> Vec3 {
     }
 }
 
-fn planet_vault_rewards(planet_idx: usize) -> &'static [Vec3] {
-    match planet_idx {
-        _ => &P1_VAULT_REWARDS,
-    }
+fn planet_vault_rewards(_planet_idx: usize) -> &'static [Vec3] {
+    &P1_VAULT_REWARDS
 }
 
 fn build_planet_rooms(planet_idx: usize) -> RoomVec {
     match planet_idx {
+        1 => build_planet2_rooms(),
+        2 => build_planet3_rooms(),
         _ => build_planet1_rooms(),
     }
 }
@@ -277,32 +369,32 @@ const P1_ARENA_TLC: Vec2 = Vec2::new(-4720.0, 3056.0);
 const P1_ARENA_BRC: Vec2 = Vec2::new(-2896.0, 1552.0);
 
 // E Room — Top Right
-const P1_EROOM_TR_TLC:      Vec2 = Vec2::new(1648.0, 2992.0);
-const P1_EROOM_TR_BRC:      Vec2 = Vec2::new(3184.0, 1616.0);
+const P1_EROOM_TR_TLC:      Vec2 = Vec2::new(1584.0, 2992.0);
+const P1_EROOM_TR_BRC:      Vec2 = Vec2::new(3184.0, 1552.0);
 const P1_EROOM_TR_TILE_TLC: Vec2 = Vec2::new(201.0,  6.0);
 const P1_EROOM_TR_TILE_BRC: Vec2 = Vec2::new(249.0, 49.0);
 
 // E Room — Top Center
-const P1_EROOM_TC_TLC:      Vec2 = Vec2::new(-2256.0, 2512.0);
-const P1_EROOM_TC_BRC:      Vec2 = Vec2::new(-16.0,   1904.0);
+const P1_EROOM_TC_TLC:      Vec2 = Vec2::new(-2320.0, 2512.0);
+const P1_EROOM_TC_BRC:      Vec2 = Vec2::new(-16.0,   1840.0);
 const P1_EROOM_TC_TILE_TLC: Vec2 = Vec2::new(79.0,  21.0);
 const P1_EROOM_TC_TILE_BRC: Vec2 = Vec2::new(149.0, 40.0);
 
 // E Room — Mid Right 1
-const P1_EROOM_MR1_TLC:      Vec2 = Vec2::new(1968.0,  16.0);
-const P1_EROOM_MR1_BRC:      Vec2 = Vec2::new(2992.0, -592.0);
+const P1_EROOM_MR1_TLC:      Vec2 = Vec2::new(1904.0,  80.0);
+const P1_EROOM_MR1_BRC:      Vec2 = Vec2::new(2992.0, -656.0);
 const P1_EROOM_MR1_TILE_TLC: Vec2 = Vec2::new(211.0,  99.0);
 const P1_EROOM_MR1_TILE_BRC: Vec2 = Vec2::new(243.0, 118.0);
 
 // E Room — Mid Left
-const P1_EROOM_ML_TLC:      Vec2 = Vec2::new(-2704.0,  -912.0);
+const P1_EROOM_ML_TLC:      Vec2 = Vec2::new(-2768.0,  -848.0);
 const P1_EROOM_ML_BRC:      Vec2 = Vec2::new(-1680.0, -1520.0);
 const P1_EROOM_ML_TILE_TLC: Vec2 = Vec2::new(65.0,  128.0);
 const P1_EROOM_ML_TILE_BRC: Vec2 = Vec2::new(97.0,  147.0);
 
 // E Room — Mid Right 2
-const P1_EROOM_MR2_TLC:      Vec2 = Vec2::new(1968.0, -1264.0);
-const P1_EROOM_MR2_BRC:      Vec2 = Vec2::new(2992.0, -1936.0);
+const P1_EROOM_MR2_TLC:      Vec2 = Vec2::new(1968.0, -1200.0);
+const P1_EROOM_MR2_BRC:      Vec2 = Vec2::new(2992.0, -2000.0);
 const P1_EROOM_MR2_TILE_TLC: Vec2 = Vec2::new(211.0, 139.0);
 const P1_EROOM_MR2_TILE_BRC: Vec2 = Vec2::new(243.0, 160.0);
 
@@ -313,13 +405,13 @@ const P1_EROOM_BL_TILE_TLC: Vec2 = Vec2::new(56.0,  167.0);
 const P1_EROOM_BL_TILE_BRC: Vec2 = Vec2::new(88.0,  186.0);
 
 // E Room — Bottom Center
-const P1_EROOM_BC_TLC:      Vec2 = Vec2::new(-1136.0, -2160.0);
+const P1_EROOM_BC_TLC:      Vec2 = Vec2::new(-1200.0, -2096.0);
 const P1_EROOM_BC_BRC:      Vec2 = Vec2::new(-112.0,  -2768.0);
 const P1_EROOM_BC_TILE_TLC: Vec2 = Vec2::new(114.0, 167.0);
 const P1_EROOM_BC_TILE_BRC: Vec2 = Vec2::new(146.0, 186.0);
 
 // Spawn Room
-const P1_SPAWN_TLC:      Vec2 = Vec2::new(1968.0, -2512.0);
+const P1_SPAWN_TLC:      Vec2 = Vec2::new(1968.0, -2448.0);
 const P1_SPAWN_BRC:      Vec2 = Vec2::new(2992.0, -2800.0);
 const P1_SPAWN_TILE_TLC: Vec2 = Vec2::new(211.0, 178.0);
 const P1_SPAWN_TILE_BRC: Vec2 = Vec2::new(243.0, 187.0);
@@ -330,8 +422,8 @@ const P1_BOSS_SPAWN: Vec3 = Vec3::new(-3824.0, 2544.0, Z_ENTITIES);
 // Chest spawns 4 tiles below the boss spawn after the boss is defeated.
 const BOSS_CHEST_POS: Vec3 = Vec3::new(-3824.0, 2416.0, Z_ENTITIES);
 
-// Exit corridor — 3-tile breach in the south wall of the boss arena (row 52, col 30 centre).
-const BOSS_EXIT_DOOR_POS: Vec3 = Vec3::new(-3824.0, 1520.0, Z_ENTITIES);
+// Exit corridor — 3×3 gap (rows 52-54, cols 29-31). Door centred at row 53, col 30.
+const BOSS_EXIT_DOOR_POS: Vec3 = Vec3::new(-3824.0, 1488.0, Z_ENTITIES);
 
 // "Leave Planet" beacon — centre of the exit room (row 60, col 30).
 const PLANET_EXIT_BEACON_POS: Vec3 = Vec3::new(-3824.0, 1264.0, Z_ENTITIES);
@@ -401,9 +493,71 @@ fn build_planet1_rooms() -> RoomVec {
     rv
 }
 
+// ── Planet 3 mini-boss arena constants ───────────────────────────────────────
+// Planet 3 reuses the Top-Right enemy room as the mini-boss arena.
+// The G-tile gate is placed at the entrance corridor (rows 25-29, col 200).
+const P3_MINI_ARENA_TLC: Vec2 = P1_EROOM_TR_TLC;  // Vec2::new(1648.0, 2992.0)
+const P3_MINI_ARENA_BRC: Vec2 = P1_EROOM_TR_BRC;  // Vec2::new(3184.0, 1616.0)
+
+// ── Planet 2 room builder ─────────────────────────────────────────────────────
+
+fn build_planet2_rooms() -> RoomVec {
+    let mut rv = RoomVec(Vec::new());
+
+    // Same 7 enemy rooms as P1 — different tile chars in the map add the dials.
+    rv.0.push(planet_enemy_room(P1_EROOM_TR_TLC,  P1_EROOM_TR_BRC,  P1_EROOM_TR_TILE_TLC,  P1_EROOM_TR_TILE_BRC,  49, 44));
+    rv.0.push(planet_enemy_room(P1_EROOM_TC_TLC,  P1_EROOM_TC_BRC,  P1_EROOM_TC_TILE_TLC,  P1_EROOM_TC_TILE_BRC,  71, 20));
+    rv.0.push(planet_enemy_room(P1_EROOM_MR1_TLC, P1_EROOM_MR1_BRC, P1_EROOM_MR1_TILE_TLC, P1_EROOM_MR1_TILE_BRC, 33, 20));
+    rv.0.push(planet_enemy_room(P1_EROOM_ML_TLC,  P1_EROOM_ML_BRC,  P1_EROOM_ML_TILE_TLC,  P1_EROOM_ML_TILE_BRC,  33, 20));
+    rv.0.push(planet_enemy_room(P1_EROOM_MR2_TLC, P1_EROOM_MR2_BRC, P1_EROOM_MR2_TILE_TLC, P1_EROOM_MR2_TILE_BRC, 33, 22));
+    rv.0.push(planet_enemy_room(P1_EROOM_BL_TLC,  P1_EROOM_BL_BRC,  P1_EROOM_BL_TILE_TLC,  P1_EROOM_BL_TILE_BRC,  33, 20));
+    rv.0.push(planet_enemy_room(P1_EROOM_BC_TLC,  P1_EROOM_BC_BRC,  P1_EROOM_BC_TILE_TLC,  P1_EROOM_BC_TILE_BRC,  33, 20));
+
+    let mut spawn = Room::new(P1_SPAWN_TLC, P1_SPAWN_BRC, P1_SPAWN_TILE_TLC, P1_SPAWN_TILE_BRC, make_empty_layout());
+    spawn.cleared = true;
+    spawn.visited = true;
+    rv.0.push(spawn);
+
+    let mut exit = Room::new(P1_EXIT_TLC, P1_EXIT_BRC, P1_EXIT_TILE_TLC, P1_EXIT_TILE_BRC, make_empty_layout());
+    exit.cleared = true;
+    rv.0.push(exit);
+
+    rv
+}
+
+// ── Planet 3 room builder ─────────────────────────────────────────────────────
+
+fn build_planet3_rooms() -> RoomVec {
+    let mut rv = RoomVec(Vec::new());
+
+    // Top-right room is the mini-boss arena — omitted from RoomVec so enemies don't
+    // pre-populate it; mini_boss_arena_trigger handles it instead.
+    rv.0.push(planet_enemy_room(P1_EROOM_TC_TLC,  P1_EROOM_TC_BRC,  P1_EROOM_TC_TILE_TLC,  P1_EROOM_TC_TILE_BRC,  71, 20));
+    rv.0.push(planet_enemy_room(P1_EROOM_MR1_TLC, P1_EROOM_MR1_BRC, P1_EROOM_MR1_TILE_TLC, P1_EROOM_MR1_TILE_BRC, 33, 20));
+    rv.0.push(planet_enemy_room(P1_EROOM_ML_TLC,  P1_EROOM_ML_BRC,  P1_EROOM_ML_TILE_TLC,  P1_EROOM_ML_TILE_BRC,  33, 20));
+    rv.0.push(planet_enemy_room(P1_EROOM_MR2_TLC, P1_EROOM_MR2_BRC, P1_EROOM_MR2_TILE_TLC, P1_EROOM_MR2_TILE_BRC, 33, 22));
+    rv.0.push(planet_enemy_room(P1_EROOM_BL_TLC,  P1_EROOM_BL_BRC,  P1_EROOM_BL_TILE_TLC,  P1_EROOM_BL_TILE_BRC,  33, 20));
+    rv.0.push(planet_enemy_room(P1_EROOM_BC_TLC,  P1_EROOM_BC_BRC,  P1_EROOM_BC_TILE_TLC,  P1_EROOM_BC_TILE_BRC,  33, 20));
+
+    let mut spawn = Room::new(P1_SPAWN_TLC, P1_SPAWN_BRC, P1_SPAWN_TILE_TLC, P1_SPAWN_TILE_BRC, make_empty_layout());
+    spawn.cleared = true;
+    spawn.visited = true;
+    rv.0.push(spawn);
+
+    let mut exit = Room::new(P1_EXIT_TLC, P1_EXIT_BRC, P1_EXIT_TILE_TLC, P1_EXIT_TILE_BRC, make_empty_layout());
+    exit.cleared = true;
+    rv.0.push(exit);
+
+    rv
+}
+
 // ── Setup planet level ────────────────────────────────────────────────────────
 
-fn setup_planet_level(mut commands: Commands, planet_count: Res<PlanetCount>) {
+fn setup_planet_level(
+    mut commands: Commands,
+    mut room_vec: ResMut<RoomVec>,
+    planet_count: Res<PlanetCount>,
+) {
     use std::io::{BufRead, BufReader};
     let planet_idx = planet_count.0 as usize;
     let map_path = planet_map_file(planet_idx);
@@ -420,7 +574,9 @@ fn setup_planet_level(mut commands: Commands, planet_count: Res<PlanetCount>) {
         .filter_map(|l| l.ok())
         .collect();
     commands.insert_resource(GeneratedLevel(rows));
-    commands.insert_resource(build_planet_rooms(planet_idx));
+    // Populate RoomVec directly so assign_doors (which runs in the same schedule)
+    // sees the planet rooms without waiting for a deferred command flush.
+    *room_vec = build_planet_rooms(planet_idx);
 }
 
 // ── Background tints & images ─────────────────────────────────────────────────
@@ -494,7 +650,11 @@ fn restore_background(
 ) {
     clear_color.0 = Color::srgb(0.02, 0.02, 0.06);
     commands.remove_resource::<PlanetLevelMarker>();
+    commands.remove_resource::<TestPlanetMode>();
     commands.remove_resource::<BossArenaState>();
+    commands.remove_resource::<DialTargets>();
+    commands.remove_resource::<DialInteractState>();
+    commands.remove_resource::<MiniBossArenaState>();
     for e in &bar_q {
         commands.entity(e).despawn();
     }
@@ -516,7 +676,7 @@ fn spawn_boss_exit_door(mut commands: Commands, tiles: Res<TileRes>) {
         Sprite::from_image(tiles.closed_door.clone()),
         Transform::from_translation(BOSS_EXIT_DOOR_POS),
         Collidable,
-        Collider { half_extents: Vec2::new(TILE_SIZE * 1.5, TILE_SIZE * 0.5) },
+        Collider { half_extents: Vec2::new(TILE_SIZE * 1.5, TILE_SIZE * 1.5) },
         BossExitDoor,
         crate::GameEntity,
     ));
@@ -963,6 +1123,8 @@ fn update_code_entry_ui(
     entry_state: Option<ResMut<CodeEntryState>>,
     codes: Res<StationCodes>,
     mut signals: ResMut<PlanetSignals>,
+    mut dial_targets: ResMut<DialTargets>,
+    planet_count: Res<PlanetCount>,
     input: Res<ButtonInput<KeyCode>>,
     bindings: Res<crate::settings::KeyBindings>,
     time: Res<Time>,
@@ -1042,20 +1204,33 @@ fn update_code_entry_ui(
                 sprite.image = open_door.clone();
             }
 
-            let sig_a: u8 = random_range(1u8..=5u8);
-            signals.signals[0] = Some(sig_a);
             let font: Handle<Font> = asset_server.load(FONT_PATH);
             let popup_pos = player_q.single()
                 .map(|tf| tf.translation + Vec3::new(0.0, TILE_SIZE * 2.0, 100.0))
                 .unwrap_or(Vec3::new(0.0, 60.0, 100.0));
-            commands.spawn((
-                Text2d::new(format!("Signal Strength A: {}", sig_a)),
-                TextFont { font, font_size: 20.0, ..default() },
-                TextColor(Color::srgb(0.2, 1.0, 0.5)),
-                Transform::from_translation(popup_pos),
-                crate::rewards::RewardPopup { timer: Timer::from_seconds(3.0, TimerMode::Once) },
-                GameEntity,
-            ));
+            if planet_count.0 == 0 {
+                let sig_a: u8 = random_range(1u8..=5u8);
+                signals.signals[0] = Some(sig_a);
+                commands.spawn((
+                    Text2d::new(format!("Signal Strength A: {}", sig_a)),
+                    TextFont { font, font_size: 20.0, ..default() },
+                    TextColor(Color::srgb(0.2, 1.0, 0.5)),
+                    Transform::from_translation(popup_pos),
+                    crate::rewards::RewardPopup { timer: Timer::from_seconds(3.0, TimerMode::Once) },
+                    GameEntity,
+                ));
+            } else {
+                let target: u8 = random_range(0u8..=9u8);
+                dial_targets.targets[0] = Some(target);
+                commands.spawn((
+                    Text2d::new(format!("Dial A Target: {}", target)),
+                    TextFont { font, font_size: 20.0, ..default() },
+                    TextColor(Color::srgb(0.9, 0.9, 0.2)),
+                    Transform::from_translation(popup_pos),
+                    crate::rewards::RewardPopup { timer: Timer::from_seconds(3.0, TimerMode::Once) },
+                    GameEntity,
+                ));
+            }
 
             close_keypad(&mut commands, &ui_q);
         } else {
@@ -1075,10 +1250,12 @@ fn close_keypad(commands: &mut Commands, ui_q: &Query<Entity, With<CodeEntryUi>>
     commands.remove_resource::<CodeEntryState>();
 }
 
-// ── Planet signals init ───────────────────────────────────────────────────────
+// ── Planet resources init ─────────────────────────────────────────────────────
 
-fn init_planet_signals(mut commands: Commands) {
+fn init_planet_resources(mut commands: Commands) {
     commands.insert_resource(PlanetSignals::default());
+    commands.insert_resource(DialTargets::default());
+    commands.insert_resource(MiniBossArenaState::Idle);
 }
 
 // ── Test-mode clue injection ─────────────────────────────────────────────────
@@ -1092,8 +1269,9 @@ fn inject_test_planet_clues(
     mut codes: ResMut<StationCodes>,
     mut colors: ResMut<StationColors>,
     mut symbols: ResMut<StationSymbols>,
+    test_mode: Option<Res<TestPlanetMode>>,
 ) {
-    if symbols.symbols.iter().any(|s| s.is_some()) { return; }
+    if test_mode.is_none() && symbols.symbols.iter().any(|s| s.is_some()) { return; }
     codes.codes     = [Some(1), Some(2), Some(3)];
     colors.colors   = [Some(0), Some(1), Some(2)];
     symbols.symbols = [Some(0), Some(1), Some(2)];
@@ -1145,6 +1323,7 @@ fn terminal_proximity(
     session: Option<Res<TerminalSession>>,
     code_session: Option<Res<CodeEntryState>>,
     signals: Res<PlanetSignals>,
+    planet_count: Res<PlanetCount>,
     input: Res<ButtonInput<KeyCode>>,
     bindings: Res<crate::settings::KeyBindings>,
     asset_server: Res<AssetServer>,
@@ -1220,6 +1399,8 @@ fn terminal_proximity(
             entered: [0; 3],
             cursor: 0,
             wrong_timer: None,
+            planet_idx: planet_count.0,
+            font: asset_server.load(FONT_PATH),
         });
         spawn_terminal_ui(&mut commands, &asset_server, kind);
     }
@@ -1233,15 +1414,20 @@ fn spawn_terminal_ui(commands: &mut Commands, asset_server: &AssetServer, kind: 
     };
     let accent = terminal_accent(kind);
 
+    let (ui_w, ui_margin) = match kind {
+        TerminalKind::Freq => (520.0_f32, -260.0_f32),
+        _                  => (360.0_f32, -180.0_f32),
+    };
+
     commands
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                width: Val::Px(360.0),
+                width: Val::Px(ui_w),
                 height: Val::Auto,
                 left: Val::Percent(50.0),
                 top: Val::Percent(40.0),
-                margin: UiRect { left: Val::Px(-180.0), ..default() },
+                margin: UiRect { left: Val::Px(ui_margin), ..default() },
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 row_gap: Val::Px(12.0),
@@ -1296,6 +1482,7 @@ fn update_terminal_ui(
     colors: Res<StationColors>,
     symbols: Res<StationSymbols>,
     mut signals: ResMut<PlanetSignals>,
+    mut dial_targets: ResMut<DialTargets>,
     input: Res<ButtonInput<KeyCode>>,
     bindings: Res<crate::settings::KeyBindings>,
     time: Res<Time>,
@@ -1306,7 +1493,6 @@ fn update_terminal_ui(
     mut color_q: Query<&mut Sprite, (With<ColorTerminal>, Without<SymbolTerminal>, Without<FreqMaster>)>,
     mut symbol_q: Query<&mut Sprite, (With<SymbolTerminal>, Without<ColorTerminal>, Without<FreqMaster>)>,
     mut freq_q: Query<(Entity, &mut Sprite), (With<FreqMaster>, Without<ColorTerminal>, Without<SymbolTerminal>)>,
-    asset_server: Res<AssetServer>,
 ) {
     let Some(mut state) = session else { return };
 
@@ -1369,15 +1555,14 @@ fn update_terminal_ui(
 
         if correct {
             let terminal_entity = state.terminal_entity;
-            let font: Handle<Font> = asset_server.load(FONT_PATH);
+            let font = state.font.clone();
+            let planet_idx = state.planet_idx;
             let popup_pos = player_q.single()
                 .map(|tf| tf.translation + Vec3::new(0.0, TILE_SIZE * 2.0, 100.0))
                 .unwrap_or(Vec3::new(0.0, 60.0, 100.0));
 
             match kind {
                 TerminalKind::Color => {
-                    let sig = random_range(1u8..=5u8);
-                    signals.signals[1] = Some(sig);
                     if let Ok(mut sprite) = color_q.get_mut(terminal_entity) {
                         sprite.color = Color::srgb(0.3, 0.3, 0.3);
                     }
@@ -1386,18 +1571,31 @@ fn update_terminal_ui(
                     if let Ok(mut e) = commands.get_entity(terminal_entity) {
                         e.insert(ColorTerminal { unlocked: true });
                     }
-                    commands.spawn((
-                        Text2d::new(format!("Signal Strength B: {}", sig)),
-                        TextFont { font, font_size: 20.0, ..default() },
-                        TextColor(Color::srgb(1.0, 0.5, 0.2)),
-                        Transform::from_translation(popup_pos),
-                        crate::rewards::RewardPopup { timer: Timer::from_seconds(3.0, TimerMode::Once) },
-                        GameEntity,
-                    ));
+                    if planet_idx == 0 {
+                        let sig = random_range(1u8..=5u8);
+                        signals.signals[1] = Some(sig);
+                        commands.spawn((
+                            Text2d::new(format!("Signal Strength B: {}", sig)),
+                            TextFont { font, font_size: 20.0, ..default() },
+                            TextColor(Color::srgb(1.0, 0.5, 0.2)),
+                            Transform::from_translation(popup_pos),
+                            crate::rewards::RewardPopup { timer: Timer::from_seconds(3.0, TimerMode::Once) },
+                            GameEntity,
+                        ));
+                    } else {
+                        let target = random_range(0u8..=3u8);
+                        dial_targets.targets[1] = Some(target);
+                        commands.spawn((
+                            Text2d::new(format!("Dial B Target: {}", target)),
+                            TextFont { font, font_size: 20.0, ..default() },
+                            TextColor(Color::srgb(1.0, 0.6, 0.1)),
+                            Transform::from_translation(popup_pos),
+                            crate::rewards::RewardPopup { timer: Timer::from_seconds(3.0, TimerMode::Once) },
+                            GameEntity,
+                        ));
+                    }
                 }
                 TerminalKind::Symbol => {
-                    let sig = random_range(1u8..=5u8);
-                    signals.signals[2] = Some(sig);
                     if let Ok(mut sprite) = symbol_q.get_mut(terminal_entity) {
                         sprite.color = Color::srgb(0.3, 0.3, 0.3);
                     }
@@ -1406,14 +1604,29 @@ fn update_terminal_ui(
                     if let Ok(mut e) = commands.get_entity(terminal_entity) {
                         e.insert(SymbolTerminal { unlocked: true });
                     }
-                    commands.spawn((
-                        Text2d::new(format!("Signal Strength C: {}", sig)),
-                        TextFont { font, font_size: 20.0, ..default() },
-                        TextColor(Color::srgb(0.8, 0.3, 1.0)),
-                        Transform::from_translation(popup_pos),
-                        crate::rewards::RewardPopup { timer: Timer::from_seconds(3.0, TimerMode::Once) },
-                        GameEntity,
-                    ));
+                    if planet_idx == 0 {
+                        let sig = random_range(1u8..=5u8);
+                        signals.signals[2] = Some(sig);
+                        commands.spawn((
+                            Text2d::new(format!("Signal Strength C: {}", sig)),
+                            TextFont { font, font_size: 20.0, ..default() },
+                            TextColor(Color::srgb(0.8, 0.3, 1.0)),
+                            Transform::from_translation(popup_pos),
+                            crate::rewards::RewardPopup { timer: Timer::from_seconds(3.0, TimerMode::Once) },
+                            GameEntity,
+                        ));
+                    } else {
+                        let target = random_range(0u8..=5u8);
+                        dial_targets.targets[2] = Some(target);
+                        commands.spawn((
+                            Text2d::new(format!("Dial C Target: {}", target)),
+                            TextFont { font, font_size: 20.0, ..default() },
+                            TextColor(Color::srgb(0.8, 0.3, 1.0)),
+                            Transform::from_translation(popup_pos),
+                            crate::rewards::RewardPopup { timer: Timer::from_seconds(3.0, TimerMode::Once) },
+                            GameEntity,
+                        ));
+                    }
                 }
                 TerminalKind::Freq => {
                     // Unlock every FreqMaster tile so the full widened doorway opens.
@@ -1450,4 +1663,395 @@ fn close_terminal(commands: &mut Commands, ui_q: &Query<Entity, With<TerminalUi>
         commands.entity(e).despawn();
     }
     commands.remove_resource::<TerminalSession>();
+}
+
+// ── Dial proximity ────────────────────────────────────────────────────────────
+
+fn dial_proximity(
+    mut commands: Commands,
+    player_q: Query<&Transform, With<Player>>,
+    dial_q: Query<(Entity, &Transform, &DialButton)>,
+    prompt_q: Query<Entity, With<DialPrompt>>,
+    dial_state: Option<Res<DialInteractState>>,
+    session: Option<Res<TerminalSession>>,
+    code_session: Option<Res<CodeEntryState>>,
+    dial_targets: Res<DialTargets>,
+    input: Res<ButtonInput<KeyCode>>,
+    bindings: Res<crate::settings::KeyBindings>,
+    asset_server: Res<AssetServer>,
+) {
+    if dial_state.is_some() || session.is_some() || code_session.is_some() { return; }
+
+    let Ok(player_tf) = player_q.single() else { return };
+    let pp = player_tf.translation;
+    let interact_half = Vec2::splat(TILE_SIZE * 2.5);
+    let dial_half = Vec2::splat(TILE_SIZE * 0.5);
+
+    let mut near: Option<(Entity, Vec3, usize, DialType, bool, u8)> = None;
+    for (entity, tf, dial) in &dial_q {
+        if aabb_overlap(pp.x, pp.y, interact_half, tf.translation.x, tf.translation.y, dial_half) {
+            let locked = dial_targets.targets[dial.dial_idx].is_none();
+            near = Some((entity, tf.translation, dial.dial_idx, dial.dial_type, locked, dial.current));
+            break;
+        }
+    }
+
+    for e in &prompt_q { commands.entity(e).despawn(); }
+
+    let Some((dial_entity, dial_pos, dial_idx, dial_type, locked, current)) = near else { return };
+
+    let label = ["DIAL A", "DIAL B", "DIAL C"][dial_idx];
+    let (prompt_text, prompt_color) = if locked {
+        (format!("[{}] LOCKED — solve terminal first", label), Color::srgb(0.8, 0.2, 0.2))
+    } else {
+        (format!("[E] Set {}", label), Color::srgb(0.2, 1.0, 1.0))
+    };
+
+    let font: Handle<Font> = asset_server.load(FONT_PATH);
+    commands.spawn((
+        Text2d::new(prompt_text),
+        TextFont { font, font_size: 18.0, ..default() },
+        TextColor(prompt_color),
+        Transform::from_translation(dial_pos + Vec3::new(0.0, TILE_SIZE * 1.5, 10.0)),
+        DialPrompt,
+        GameEntity,
+    ));
+
+    if !locked && input.just_pressed(bindings.interact) {
+        commands.insert_resource(DialInteractState {
+            dial_entity,
+            dial_idx,
+            dial_type,
+            current,
+        });
+        spawn_dial_ui(&mut commands, &asset_server, dial_idx, dial_type, current, dial_targets.targets[dial_idx]);
+    }
+}
+
+fn spawn_dial_ui(
+    commands: &mut Commands,
+    asset_server: &AssetServer,
+    dial_idx: usize,
+    dial_type: DialType,
+    current: u8,
+    target: Option<u8>,
+) {
+    let font: Handle<Font> = asset_server.load(FONT_PATH);
+    let title = ["DIAL A", "DIAL B", "DIAL C"][dial_idx];
+    let accent = match dial_type {
+        DialType::Code   => Color::srgb(0.9, 0.9, 0.2),
+        DialType::Color  => Color::srgb(1.0, 0.6, 0.1),
+        DialType::Symbol => Color::srgb(0.8, 0.3, 1.0),
+    };
+    let target_str = match target {
+        Some(t) => format!("TARGET: {}", t),
+        None    => "TARGET: ???".to_string(),
+    };
+
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Px(280.0),
+                height: Val::Auto,
+                left: Val::Percent(50.0),
+                top: Val::Percent(40.0),
+                margin: UiRect { left: Val::Px(-140.0), ..default() },
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(10.0),
+                padding: UiRect::all(Val::Px(20.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.03, 0.08, 0.96)),
+            BorderColor(accent),
+            BorderRadius::all(Val::Px(8.0)),
+            ZIndex(30),
+            DialUi,
+        ))
+        .with_children(|panel| {
+            panel.spawn((
+                Text::new(title),
+                TextFont { font: font.clone(), font_size: 22.0, ..default() },
+                TextColor(accent),
+            ));
+            panel.spawn((
+                Text::new(target_str),
+                TextFont { font: font.clone(), font_size: 16.0, ..default() },
+                TextColor(Color::srgb(0.7, 0.7, 0.7)),
+            ));
+            panel.spawn((
+                Text::new(format!("▲  {}  ▼", current)),
+                TextFont { font: font.clone(), font_size: 32.0, ..default() },
+                TextColor(Color::WHITE),
+                DialCurrentText,
+            ));
+            panel.spawn((
+                Text::new("W/S  change    Enter  confirm    E  close"),
+                TextFont { font: font.clone(), font_size: 13.0, ..default() },
+                TextColor(Color::srgb(0.5, 0.5, 0.5)),
+            ));
+        });
+}
+
+// ── Dial UI update ────────────────────────────────────────────────────────────
+
+fn update_dial_ui(
+    mut commands: Commands,
+    dial_state: Option<ResMut<DialInteractState>>,
+    mut dial_q: Query<(&mut DialButton, &mut Sprite)>,
+    dial_targets: Res<DialTargets>,
+    input: Res<ButtonInput<KeyCode>>,
+    bindings: Res<crate::settings::KeyBindings>,
+    mut current_text_q: Query<&mut Text, With<DialCurrentText>>,
+    ui_q: Query<Entity, With<DialUi>>,
+) {
+    let Some(mut state) = dial_state else { return };
+
+    let dial_max: u8 = match state.dial_type {
+        DialType::Code   => 9,
+        DialType::Color  => 3,
+        DialType::Symbol => 5,
+    };
+
+    if input.just_pressed(bindings.interact) {
+        close_dial_ui(&mut commands, &ui_q);
+        return;
+    }
+
+    if input.just_pressed(bindings.move_up) {
+        state.current = (state.current + 1) % (dial_max + 1);
+    }
+    if input.just_pressed(bindings.move_down) {
+        state.current = (state.current + dial_max) % (dial_max + 1);
+    }
+
+    if let Ok(mut txt) = current_text_q.single_mut() {
+        *txt = Text::new(format!("▲  {}  ▼", state.current));
+    }
+
+    if input.just_pressed(KeyCode::Enter) {
+        let confirmed_val = state.current;
+        let target = dial_targets.targets[state.dial_idx];
+        if let Ok((mut dial, mut sprite)) = dial_q.get_mut(state.dial_entity) {
+            dial.current = confirmed_val;
+            if target == Some(confirmed_val) {
+                sprite.color = Color::srgb(0.2, 1.0, 0.3);
+            } else {
+                sprite.color = Color::srgb(1.0, 1.0, 1.0);
+            }
+        }
+        close_dial_ui(&mut commands, &ui_q);
+    }
+}
+
+fn close_dial_ui(commands: &mut Commands, ui_q: &Query<Entity, With<DialUi>>) {
+    for e in ui_q.iter() {
+        commands.entity(e).despawn();
+    }
+    commands.remove_resource::<DialInteractState>();
+}
+
+// ── Check all dials ───────────────────────────────────────────────────────────
+
+fn check_all_dials(
+    mut commands: Commands,
+    dial_q: Query<&DialButton>,
+    dial_targets: Res<DialTargets>,
+    mut boss_door_q: Query<&mut PlanetBossDoor>,
+    mini_gate_q: Query<Entity, With<MiniBossGate>>,
+) {
+    let targets_ready = dial_targets.targets.iter().all(|t| t.is_some());
+    if !targets_ready || dial_q.is_empty() { return; }
+
+    let all_correct = dial_q.iter().all(|dial| {
+        dial_targets.targets[dial.dial_idx] == Some(dial.current)
+    });
+
+    if all_correct {
+        for mut door in &mut boss_door_q {
+            door.ready = true;
+        }
+        for gate_e in &mini_gate_q {
+            commands.entity(gate_e).remove::<Collidable>();
+            commands.entity(gate_e).remove::<Collider>();
+        }
+    }
+}
+
+// ── Planet 2 boss door proximity ──────────────────────────────────────────────
+
+fn boss_door_proximity(
+    mut commands: Commands,
+    player_q: Query<&Transform, With<Player>>,
+    mut door_q: Query<(Entity, &Transform, &mut Sprite, &PlanetBossDoor)>,
+    prompt_q: Query<Entity, With<PlanetBossDoorPrompt>>,
+    session: Option<Res<TerminalSession>>,
+    code_session: Option<Res<CodeEntryState>>,
+    dial_state: Option<Res<DialInteractState>>,
+    input: Res<ButtonInput<KeyCode>>,
+    bindings: Res<crate::settings::KeyBindings>,
+    asset_server: Res<AssetServer>,
+) {
+    if session.is_some() || code_session.is_some() || dial_state.is_some() { return; }
+
+    let Ok(player_tf) = player_q.single() else { return };
+    let pp = player_tf.translation;
+    let interact_half = Vec2::splat(TILE_SIZE * 2.5);
+    let door_half = Vec2::splat(TILE_SIZE * 0.5);
+
+    let mut near_pos: Option<Vec3> = None;
+    let mut is_ready = false;
+    for (_, door_tf, _, door) in door_q.iter() {
+        if aabb_overlap(pp.x, pp.y, interact_half, door_tf.translation.x, door_tf.translation.y, door_half) {
+            near_pos = Some(door_tf.translation);
+            is_ready = door.ready;
+            break;
+        }
+    }
+
+    for e in &prompt_q { commands.entity(e).despawn(); }
+
+    let Some(door_pos) = near_pos else { return };
+
+    let (text, color) = if is_ready {
+        ("[E] Open".to_string(), Color::srgb(0.2, 1.0, 0.4))
+    } else {
+        ("Calibration incomplete".to_string(), Color::srgb(0.8, 0.2, 0.2))
+    };
+
+    let font: Handle<Font> = asset_server.load(FONT_PATH);
+    commands.spawn((
+        Text2d::new(text),
+        TextFont { font, font_size: 18.0, ..default() },
+        TextColor(color),
+        Transform::from_translation(door_pos + Vec3::new(0.0, TILE_SIZE * 1.5, 10.0)),
+        PlanetBossDoorPrompt,
+        GameEntity,
+    ));
+
+    if is_ready && input.just_pressed(bindings.interact) {
+        let popup_pos = pp + Vec3::new(0.0, TILE_SIZE * 2.0, 100.0);
+        for (entity, _, mut sprite, _) in door_q.iter_mut() {
+            sprite.color = Color::srgb(0.3, 0.3, 0.3);
+            commands.entity(entity).remove::<Collidable>();
+            commands.entity(entity).remove::<Collider>();
+        }
+        let font: Handle<Font> = asset_server.load(FONT_PATH);
+        commands.spawn((
+            Text2d::new("Boss Arena Unlocked!"),
+            TextFont { font, font_size: 24.0, ..default() },
+            TextColor(Color::srgb(0.2, 1.0, 0.4)),
+            Transform::from_translation(popup_pos),
+            crate::rewards::RewardPopup { timer: Timer::from_seconds(3.0, TimerMode::Once) },
+            GameEntity,
+        ));
+    }
+}
+
+// ── Planet 3 mini boss arena trigger ─────────────────────────────────────────
+
+fn mini_boss_arena_trigger(
+    mut commands: Commands,
+    player_q: Query<&Transform, With<Player>>,
+    door_q: Query<(Entity, &Transform), With<Door>>,
+    arena_state: Res<MiniBossArenaState>,
+    enemy_res: Res<EnemyRes>,
+    station_level: Res<StationLevel>,
+    planet_count: Res<PlanetCount>,
+    tiles: Res<TileRes>,
+) {
+    if planet_count.0 as usize != 2 { return; }
+    if *arena_state != MiniBossArenaState::Idle { return; }
+
+    let Ok(player_tf) = player_q.single() else { return };
+    let pp = player_tf.translation.truncate();
+
+    let inside = pp.x > P3_MINI_ARENA_TLC.x + 64.0
+        && pp.x < P3_MINI_ARENA_BRC.x - 64.0
+        && pp.y < P3_MINI_ARENA_TLC.y - 64.0
+        && pp.y > P3_MINI_ARENA_BRC.y + 64.0;
+    if !inside { return; }
+
+    let hp = 750.0 + station_level.0 as f32 * 250.0;
+    let mini_boss_pos = Vec3::new(
+        (P3_MINI_ARENA_TLC.x + P3_MINI_ARENA_BRC.x) * 0.5,
+        (P3_MINI_ARENA_TLC.y + P3_MINI_ARENA_BRC.y) * 0.5,
+        Z_ENTITIES,
+    );
+    commands.spawn((
+        (
+            Sprite::from_image(enemy_res.frames[0].clone()),
+            Transform { translation: mini_boss_pos, scale: Vec3::splat(2.5), ..default() },
+            Enemy,
+            Velocity::new(),
+            MeleeEnemy,
+            AnimationTimer(Timer::from_seconds(0.3, TimerMode::Repeating)),
+            EnemyFrames { handles: enemy_res.frames.clone(), index: 0 },
+            ActiveEnemy,
+        ),
+        (
+            HitAnimation { timer: Timer::from_seconds(0.15, TimerMode::Once) },
+            crate::enemies::Health(hp),
+            crate::enemies::MaxHealth(hp),
+            EnemyMoveSpeed(ENEMY_SPEED * 0.7),
+            Collidable,
+            Collider { half_extents: Vec2::splat(TILE_SIZE * 1.5) },
+            MiniBoss,
+            GameEntity,
+        ),
+    ));
+
+    for (entity, door_tf) in &door_q {
+        let x = door_tf.translation.x;
+        let y = door_tf.translation.y;
+        if x >= P3_MINI_ARENA_TLC.x && x <= P3_MINI_ARENA_BRC.x
+            && y <= P3_MINI_ARENA_TLC.y && y >= P3_MINI_ARENA_BRC.y
+        {
+            commands.entity(entity).insert((
+                Collidable,
+                Collider { half_extents: Vec2::splat(TILE_SIZE * 0.5) },
+                Sprite::from_image(tiles.closed_door.clone()),
+            ));
+        }
+    }
+
+    commands.insert_resource(MiniBossArenaState::Active);
+}
+
+// ── Planet 3 watch mini boss death ────────────────────────────────────────────
+
+fn watch_mini_boss_death(
+    mut commands: Commands,
+    mini_boss_q: Query<(), With<MiniBoss>>,
+    arena_state: Res<MiniBossArenaState>,
+    planet_count: Res<PlanetCount>,
+    mut signals: ResMut<PlanetSignals>,
+    player_q: Query<&Transform, With<Player>>,
+    asset_server: Res<AssetServer>,
+) {
+    if planet_count.0 as usize != 2 { return; }
+    if *arena_state != MiniBossArenaState::Active { return; }
+    if !mini_boss_q.is_empty() { return; }
+
+    let a = random_range(1u8..=5u8);
+    let b = random_range(1u8..=5u8);
+    let c = random_range(1u8..=5u8);
+    signals.signals = [Some(a), Some(b), Some(c)];
+
+    let popup_pos = player_q.single()
+        .map(|tf| tf.translation + Vec3::new(0.0, TILE_SIZE * 3.0, 100.0))
+        .unwrap_or(Vec3::new(0.0, 60.0, 100.0));
+
+    let font: Handle<Font> = asset_server.load(FONT_PATH);
+    commands.spawn((
+        Text2d::new(format!("Signals acquired!  {}  {}  {}", a, b, c)),
+        TextFont { font, font_size: 22.0, ..default() },
+        TextColor(Color::srgb(0.3, 0.8, 1.0)),
+        Transform::from_translation(popup_pos),
+        crate::rewards::RewardPopup { timer: Timer::from_seconds(4.0, TimerMode::Once) },
+        GameEntity,
+    ));
+
+    commands.insert_resource(MiniBossArenaState::Done);
 }

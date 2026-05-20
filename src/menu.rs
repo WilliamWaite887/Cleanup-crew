@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy::app::AppExit;
 
-use crate::{GameState, GameMusicVolume, MusicTrack, PlanetLevelMarker, TestRoomMarker};
+use crate::{GameState, GameMusicVolume, MusicTrack, PlanetCount, PlanetLevelMarker, TestPlanetMode, TestRoomMarker};
 use crate::settings;
 
 pub struct MenuPlugin;
@@ -23,7 +23,9 @@ struct MenuUI;
 #[derive(Component)]
 enum MenuButton {
     Play,
-    PlayPlanet,
+    TestPlanet1,
+    TestPlanet2,
+    TestPlanet3,
     TestRoom,
     Credits,
     Settings,
@@ -125,27 +127,40 @@ fn setup_menu(
                         ));
                     });
 
-                    // Planet Test Button
-                    col.spawn((
-                        Button,
-                        MenuButton::PlayPlanet,
-                        Node {
-                            width: Val::Px(420.0),
-                            height: Val::Px(60.0),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            padding: UiRect::all(Val::Px(8.0)),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.05, 0.2, 0.05, 0.8)),
-                        BorderColor(Color::srgba(0.3, 1.0, 0.3, 0.5)),
-                        BorderRadius::all(Val::Px(6.0)),
-                    ))
-                    .with_children(|b| {
-                        b.spawn((
-                            Text::new("Test Planet"),
-                            TextFont { font_size: 28.0, ..default() },
-                        ));
+                    // Planet Test Buttons row
+                    col.spawn(Node {
+                        flex_direction: FlexDirection::Row,
+                        column_gap: Val::Px(10.0),
+                        ..default()
+                    })
+                    .with_children(|row| {
+                        for (label, btn) in [
+                            ("Planet 1", MenuButton::TestPlanet1),
+                            ("Planet 2", MenuButton::TestPlanet2),
+                            ("Planet 3", MenuButton::TestPlanet3),
+                        ] {
+                            row.spawn((
+                                Button,
+                                btn,
+                                Node {
+                                    width: Val::Px(130.0),
+                                    height: Val::Px(50.0),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    padding: UiRect::all(Val::Px(6.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.05, 0.2, 0.05, 0.8)),
+                                BorderColor(Color::srgba(0.3, 1.0, 0.3, 0.5)),
+                                BorderRadius::all(Val::Px(6.0)),
+                            ))
+                            .with_children(|b| {
+                                b.spawn((
+                                    Text::new(label),
+                                    TextFont { font_size: 20.0, ..default() },
+                                ));
+                            });
+                        }
                     });
 
                     // Credits
@@ -286,8 +301,22 @@ fn handle_buttons(
             MenuButton::Play => {
                 next_state.set(GameState::Setup);
             }
-            MenuButton::PlayPlanet => {
+            MenuButton::TestPlanet1 => {
+                commands.insert_resource(PlanetCount(0));
                 commands.insert_resource(PlanetLevelMarker);
+                commands.insert_resource(TestPlanetMode);
+                next_state.set(GameState::Loading);
+            }
+            MenuButton::TestPlanet2 => {
+                commands.insert_resource(PlanetCount(1));
+                commands.insert_resource(PlanetLevelMarker);
+                commands.insert_resource(TestPlanetMode);
+                next_state.set(GameState::Loading);
+            }
+            MenuButton::TestPlanet3 => {
+                commands.insert_resource(PlanetCount(2));
+                commands.insert_resource(PlanetLevelMarker);
+                commands.insert_resource(TestPlanetMode);
                 next_state.set(GameState::Loading);
             }
             MenuButton::TestRoom => {
