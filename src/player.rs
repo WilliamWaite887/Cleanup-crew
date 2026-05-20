@@ -1,9 +1,10 @@
 use bevy::{prelude::*, window::PrimaryWindow};
+use rand::random_range;
 
 use crate::collidable::{Collidable, Collider};
 use crate::table;
 use crate::broom::Broom;
-use crate::{ACCEL_RATE, GameState, GameEntity, LEVEL_LEN, PLAYER_SPEED, TILE_SIZE, WIN_H, WIN_W};
+use crate::{ACCEL_RATE, GameState, GameEntity, LEVEL_LEN, PLAYER_SPEED, TILE_SIZE, WIN_H, WIN_W, Z_ENTITIES};
 use crate::enemies::{Enemy, ENEMY_SIZE};
 use crate::enemies::HitAnimation;
 use crate::map::{LevelRes, MapGridMeta};
@@ -940,6 +941,35 @@ fn thruster_dodge_system(
 
     velocity.0 = dir * 1000.0;
     fuel.current -= 1.0;
+
+    // Spawn thruster exhaust burst shooting opposite to the dash direction
+    let backward = -dir;
+    let spawn_base = player_pos - Vec2::new(0.0, 12.0);
+    for _ in 0..12 {
+        use std::f32::consts::FRAC_PI_2;
+        let spread: f32 = random_range(-0.70_f32..=0.70_f32);
+        let (sin_s, cos_s) = spread.sin_cos();
+        let spread_dir = Vec2::new(
+            backward.x * cos_s - backward.y * sin_s,
+            backward.x * sin_s + backward.y * cos_s,
+        );
+        let speed: f32 = random_range(180.0_f32..=320.0_f32);
+        let vel = spread_dir * speed;
+        let rotation = Quat::from_rotation_z(vel.to_angle() - FRAC_PI_2);
+        commands.spawn((
+            Sprite::from_color(Color::srgba(1.0, 0.78, 0.3, 1.0), Vec2::new(3.0, 7.0)),
+            Transform {
+                translation: spawn_base.extend(Z_ENTITIES + 5.0),
+                rotation,
+                ..default()
+            },
+            crate::air_particles::DashParticle {
+                velocity: vel,
+                lifetime: Timer::from_seconds(random_range(0.25_f32..=0.45_f32), TimerMode::Once),
+            },
+            GameEntity,
+        ));
+    }
 
     commands.entity(player_entity).insert(DashInvincibility(
         Timer::from_seconds(0.15, TimerMode::Once),

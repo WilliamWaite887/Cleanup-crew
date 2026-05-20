@@ -12,6 +12,12 @@ struct AirParticle {
     lifetime: Timer,
 }
 
+#[derive(Component)]
+pub(crate) struct DashParticle {
+    pub(crate) velocity: Vec2,
+    pub(crate) lifetime: Timer,
+}
+
 #[derive(Resource)]
 struct ParticleEmitTimer(Timer);
 
@@ -25,7 +31,7 @@ impl Plugin for AirParticlePlugin {
         )))
         .add_systems(
             Update,
-            (emit_air_particles, update_air_particles)
+            (emit_air_particles, update_air_particles, update_dash_particles)
                 .run_if(in_state(GameState::Playing))
                 .run_if(not(resource_exists::<crate::PlanetLevelMarker>)),
         );
@@ -117,6 +123,38 @@ fn update_air_particles(
         if particle.lifetime.finished() {
             commands.entity(entity).despawn();
             continue;
+        }
+
+        tf.translation += (particle.velocity * time.delta_secs()).extend(0.0);
+
+        let alpha = 1.0 - particle.lifetime.fraction();
+        sprite.color = sprite.color.with_alpha(alpha);
+    }
+}
+
+fn update_dash_particles(
+    mut commands: Commands,
+    time: Res<Time>,
+    rooms: Res<RoomVec>,
+    mut query: Query<(Entity, &mut Transform, &mut Sprite, &mut DashParticle)>,
+) {
+    for (entity, mut tf, mut sprite, mut particle) in &mut query {
+        particle.lifetime.tick(time.delta());
+
+        if particle.lifetime.finished() {
+            commands.entity(entity).despawn();
+            continue;
+        }
+
+        // Gently steer toward nearest breach so particles flow with the vacuum
+        let pos = tf.translation.truncate();
+        if let Some(room) = rooms.0.iter().find(|r| r.bounds_check(pos)) {
+            if let Some(&breach_pos) = room.breaches.iter().min_by(|a, b| {
+                a.distance(pos).partial_cmp(&b.distance(pos)).unwrap()
+            }) {
+                let to_breach = (breach_pos - pos).normalize_or_zero();
+                particle.velocity += to_breach * 3000.0 * time.delta_secs();
+            }
         }
 
         tf.translation += (particle.velocity * time.delta_secs()).extend(0.0);
